@@ -672,6 +672,8 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/block_device.hh
     include/seastar/fs/range.hh
     include/seastar/fs/unit_types.hh
+    src/fs/backend/cluster_allocator.cc
+    src/fs/backend/cluster_allocator.hh
     src/fs/cluster_utils.hh
     src/fs/inode_utils.hh
     src/fs/temporary_file.hh
