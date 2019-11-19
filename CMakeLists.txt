@@ -657,6 +657,7 @@ if (Seastar_EXPERIMENTAL_FS)
   target_sources(seastar
     PRIVATE
     # SeastarFS source files
+    include/seastar/fs/block_device.hh
   )
 endif()
 
