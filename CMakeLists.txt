@@ -669,6 +669,7 @@ if (Seastar_EXPERIMENTAL_FS)
     PRIVATE
     # SeastarFS source files
     include/seastar/fs/block_device.hh
+    src/fs/temporary_file.hh
   )
 endif()
 
