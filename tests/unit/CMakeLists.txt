@@ -359,6 +359,12 @@ seastar_add_test (rpc
     loopback_socket.hh
     rpc_test.cc)
 
+if (Seastar_EXPERIMENTAL_FS)
+  seastar_add_app_test (fs_block_device
+    SOURCES fs_block_device_test.cc
+    LIBRARIES seastar_testing)
+endif()
+
 seastar_add_test (semaphore
   SOURCES semaphore_test.cc)
 
