@@ -20,27 +20,31 @@
  * Copyright (C) 2019 ScyllaDB Ltd.
  */
 
-#pragma once
-
-#include <istream>
-#include <ostream>
-
-#include "api_versions_response.hh"
+#include "kafka_connection.hh"
 
 namespace seastar {
 
 namespace kafka {
 
-class api_versions_request {
-public:
-    using response_type = api_versions_response;
-    static constexpr int16_t API_KEY = 18;
-    static constexpr int16_t MIN_SUPPORTED_VERSION = 0;
-    static constexpr int16_t MAX_SUPPORTED_VERSION = 2;
+future<lw_shared_ptr<kafka_connection>> kafka_connection::connect(const std::string& host, uint16_t port,
+        const std::string& client_id) {
+    return tcp_connection::connect(host, port)
+    .then([client_id] (lw_shared_ptr<tcp_connection> connection) {
+        return make_lw_shared<kafka_connection>(connection, client_id);
+    }).then([] (lw_shared_ptr<kafka_connection> connection) {
+        return connection->init().then([connection] {
+            return connection;
+        });
+    });
+}
 
-    void serialize(std::ostream &os, int16_t api_version) const;
-    void deserialize(std::istream &is, int16_t api_version);
-};
+future<> kafka_connection::init() {
+    api_versions_request request;
+    return send(request, api_versions_request::MAX_SUPPORTED_VERSION)
+            .then([this](api_versions_response response) {
+                _api_versions = response;
+            });
+}
 
 }
 

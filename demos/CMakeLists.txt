@@ -65,6 +65,9 @@ seastar_add_demo (echo
 seastar_add_demo (ip
   SOURCES ip_demo.cc)
 
+seastar_add_demo(kafka
+  SOURCES kafka_demo.cc)
+
 seastar_add_demo (line_count
   SOURCES line_count_demo.cc)
 

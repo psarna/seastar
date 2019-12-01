@@ -20,27 +20,33 @@
  * Copyright (C) 2019 ScyllaDB Ltd.
  */
 
-#pragma once
-
-#include <istream>
-#include <ostream>
-
-#include "api_versions_response.hh"
+#include "headers.hh"
 
 namespace seastar {
 
 namespace kafka {
 
-class api_versions_request {
-public:
-    using response_type = api_versions_response;
-    static constexpr int16_t API_KEY = 18;
-    static constexpr int16_t MIN_SUPPORTED_VERSION = 0;
-    static constexpr int16_t MAX_SUPPORTED_VERSION = 2;
+void request_header::serialize(std::ostream& os, int16_t api_version) const {
+    _api_key.serialize(os, api_version);
+    _api_version.serialize(os, api_version);
+    _correlation_id.serialize(os, api_version);
+    _client_id.serialize(os, api_version);
+}
 
-    void serialize(std::ostream &os, int16_t api_version) const;
-    void deserialize(std::istream &is, int16_t api_version);
-};
+void request_header::deserialize(std::istream& is, int16_t api_version) {
+    _api_key.deserialize(is, api_version);
+    _api_version.deserialize(is, api_version);
+    _correlation_id.deserialize(is, api_version);
+    _client_id.deserialize(is, api_version);
+}
+
+void response_header::serialize(std::ostream& os, int16_t api_version) const {
+    _correlation_id.serialize(os, api_version);
+}
+
+void response_header::deserialize(std::istream& is, int16_t api_version) {
+    _correlation_id.deserialize(is, api_version);
+}
 
 }
 

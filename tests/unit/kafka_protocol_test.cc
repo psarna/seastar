@@ -33,6 +33,7 @@
 #include "../../src/kafka/protocol/kafka_records.hh"
 #include "../../src/kafka/protocol/produce_request.hh"
 #include "../../src/kafka/protocol/produce_response.hh"
+#include "../../src/kafka/protocol/headers.hh"
 
 using namespace seastar;
 
@@ -153,6 +154,28 @@ BOOST_AUTO_TEST_CASE(kafka_primitives_array_test) {
     BOOST_REQUIRE_EQUAL(strings->size(), 2);
     BOOST_REQUIRE_EQUAL(*strings[0], "abcde");
     BOOST_REQUIRE_EQUAL(*strings[1], "fg");
+}
+
+
+BOOST_AUTO_TEST_CASE(kafka_request_header_parsing_test) {
+    kafka::request_header header;
+    test_deserialize_serialize({
+        0x00, 0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x42, 0x00, 0x05, 0x61, 0x62, 0x63, 0x64, 0x65
+    }, header, 0);
+
+    BOOST_REQUIRE_EQUAL(*header._api_key, 5);
+    BOOST_REQUIRE_EQUAL(*header._api_version, 1);
+    BOOST_REQUIRE_EQUAL(*header._correlation_id, 0x42);
+    BOOST_REQUIRE_EQUAL(*header._client_id, "abcde");
+}
+
+BOOST_AUTO_TEST_CASE(kafka_response_header_parsing_test) {
+    kafka::response_header header;
+    test_deserialize_serialize({
+        0x00, 0x05, 0x00, 0x01
+    }, header, 0);
+
+    BOOST_REQUIRE_EQUAL(*header._correlation_id, 0x50001);
 }
 
 BOOST_AUTO_TEST_CASE(kafka_api_versions_response_parsing_test) {
