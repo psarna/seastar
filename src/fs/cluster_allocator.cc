@@ -18,30 +18,33 @@
 /*
  * Copyright (C) 2019 ScyllaDB
  */
-#include "fs/block_allocator.hh"
+ 
+#include "fs/cluster.hh"
+#include "fs/cluster_allocator.hh"
+
 #include <cassert>
 
 namespace seastar {
 
 namespace fs {
 
-block_allocator::block_allocator(std::queue<uint64_t> fb)
-        : _free_blocks(std::move(fb)) {}
+cluster_allocator::cluster_allocator(std::unordered_set<cluster_id_t> allocated_clusters, std::queue<cluster_id_t> free_clusters)
+        : _allocated_clusters(std::move(allocated_clusters)), _free_clusters(std::move(free_clusters)) {}
 
-uint64_t block_allocator::alloc() {
-    if (_free_blocks.empty()) {
+cluster_id_t cluster_allocator::alloc() {
+    if (_free_clusters.empty()) {
         return 0;
     }
-    uint64_t ret = _free_blocks.front();
-    _free_blocks.pop();
-    _allocated_blocks.insert(ret);
-    return ret;
+    cluster_id_t cluster_id = _free_clusters.front();
+    _free_clusters.pop();
+    _allocated_clusters.insert(cluster_id);
+    return cluster_id;
 }
 
-void block_allocator::free(uint64_t addr) {
-    assert(_allocated_blocks.count(addr) == 1);
-    _free_blocks.push(addr);    
-    _allocated_blocks.erase(addr);
+void cluster_allocator::free(cluster_id_t cluster_id) {
+    assert(_allocated_clusters.count(cluster_id) == 1);
+    _free_clusters.push(cluster_id);
+    _allocated_clusters.erase(cluster_id);
 }
 
 }

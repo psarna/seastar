@@ -237,13 +237,13 @@ seastar_add_test (allocator
 seastar_add_app_test (alien
   SOURCES alien_test.cc)
 
-seastar_add_test (block_allocator
-  KIND BOOST
-  SOURCES block_allocator_test.cc)
-
 seastar_add_app_test (block_device
   SOURCES block_device_test.cc
   LIBRARIES seastar_testing)
+
+seastar_add_test (cluster_allocator
+  KIND BOOST
+  SOURCES cluster_allocator_test.cc)
 
 seastar_add_test (checked_ptr
   SOURCES checked_ptr_test.cc)
