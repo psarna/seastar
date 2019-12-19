@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include "fs/cluster.hh"
+
 #include <unordered_set>
 #include <queue>
 
@@ -28,13 +30,13 @@ namespace seastar {
 
 namespace fs {
 
-class block_allocator {
-    std::unordered_set<uint64_t> _allocated_blocks;
-    std::queue<uint64_t> _free_blocks;
+class cluster_allocator {
+    std::unordered_set<cluster_id_t> _allocated_clusters;
+    std::queue<cluster_id_t> _free_clusters;
 public:
-    explicit block_allocator(std::queue<uint64_t>);
-    uint64_t alloc();
-    void free(uint64_t addr);
+    explicit cluster_allocator(std::unordered_set<cluster_id_t> allocated_clusters, std::queue<cluster_id_t> free_clusters);
+    cluster_id_t alloc();
+    void free(cluster_id_t cluster_id);
 };
 
 }
