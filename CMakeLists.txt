@@ -668,7 +668,12 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/block_device.hh
     include/seastar/fs/file.hh
     include/seastar/fs/temporary_file.hh
+    src/fs/bitwise.hh
+    src/fs/cluster.hh
     src/fs/file.cc
+    src/fs/inode.hh
+    src/fs/range.hh
+    src/fs/units.hh
   )
 endif()
 
