@@ -668,7 +668,12 @@ if (Seastar_EXPERIMENTAL_FS)
   target_sources(seastar
     PRIVATE
     # SeastarFS source files
+    include/seastar/fs/bitwise.hh
     include/seastar/fs/block_device.hh
+    include/seastar/fs/range.hh
+    include/seastar/fs/unit_types.hh
+    src/fs/cluster_utils.hh
+    src/fs/inode_utils.hh
     src/fs/temporary_file.hh
   )
 endif()
