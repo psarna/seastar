@@ -372,6 +372,9 @@ if (Seastar_EXPERIMENTAL_FS)
   seastar_add_test (fs_cluster_allocator
     KIND BOOST
     SOURCES fs_cluster_allocator_test.cc)
+  seastar_add_test (fs_path
+    KIND BOOST
+    SOURCES fs_path_test.cc)
   seastar_add_test (fs_seastarfs
     SOURCES fs_seastarfs_test.cc)
 endif()
