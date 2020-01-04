@@ -23,8 +23,9 @@
 
 #include "fs/cluster.hh"
 
+#include <deque>
+#include <optional>
 #include <unordered_set>
-#include <queue>
 
 namespace seastar {
 
@@ -32,10 +33,15 @@ namespace fs {
 
 class cluster_allocator {
     std::unordered_set<cluster_id_t> _allocated_clusters;
-    std::queue<cluster_id_t> _free_clusters;
+    std::deque<cluster_id_t> _free_clusters;
+
 public:
-    explicit cluster_allocator(std::unordered_set<cluster_id_t> allocated_clusters, std::queue<cluster_id_t> free_clusters);
-    cluster_id_t alloc();
+    explicit cluster_allocator(std::unordered_set<cluster_id_t> allocated_clusters, std::deque<cluster_id_t> free_clusters);
+
+    // Tries to allocate a cluster
+    std::optional<cluster_id_t> alloc();
+
+    // @p cluster_id has to be allocated using alloc()
     void free(cluster_id_t cluster_id);
 };
 

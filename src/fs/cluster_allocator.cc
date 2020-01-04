@@ -18,32 +18,34 @@
 /*
  * Copyright (C) 2019 ScyllaDB
  */
- 
+
 #include "fs/cluster.hh"
 #include "fs/cluster_allocator.hh"
 
 #include <cassert>
+#include <optional>
 
 namespace seastar {
 
 namespace fs {
 
-cluster_allocator::cluster_allocator(std::unordered_set<cluster_id_t> allocated_clusters, std::queue<cluster_id_t> free_clusters)
+cluster_allocator::cluster_allocator(std::unordered_set<cluster_id_t> allocated_clusters, std::deque<cluster_id_t> free_clusters)
         : _allocated_clusters(std::move(allocated_clusters)), _free_clusters(std::move(free_clusters)) {}
 
-cluster_id_t cluster_allocator::alloc() {
+std::optional<cluster_id_t> cluster_allocator::alloc() {
     if (_free_clusters.empty()) {
-        return 0;
+        return std::nullopt;
     }
+
     cluster_id_t cluster_id = _free_clusters.front();
-    _free_clusters.pop();
+    _free_clusters.pop_front();
     _allocated_clusters.insert(cluster_id);
     return cluster_id;
 }
 
 void cluster_allocator::free(cluster_id_t cluster_id) {
     assert(_allocated_clusters.count(cluster_id) == 1);
-    _free_clusters.push(cluster_id);
+    _free_clusters.emplace_back(cluster_id);
     _allocated_clusters.erase(cluster_id);
 }
 
