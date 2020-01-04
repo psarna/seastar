@@ -370,6 +370,9 @@ if (Seastar_EXPERIMENTAL_FS)
     SOURCES
       fs_block_device_mocker.cc
       fs_bootstrap_record_test.cc)
+  seastar_add_test (fs_path
+    KIND BOOST
+    SOURCES fs_path_test.cc)
   seastar_add_test (fs_val_or_err
     KIND BOOST
     SOURCES fs_val_or_err_test.cc)
