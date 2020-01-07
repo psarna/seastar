@@ -41,11 +41,14 @@ BOOST_AUTO_TEST_CASE(cluster_allocator_cluster_0) {
     BOOST_REQUIRE(ca.alloc() == std::nullopt);
 }
 
-BOOST_AUTO_TEST_CASE(cluster_allocator) {
-    constexpr fs::cluster_id_t clusters_per_shard = 1024;
+BOOST_AUTO_TEST_CASE(cluster_allocator_empty) {
     std::unordered_set<fs::cluster_id_t> empty_uset;
     fs::cluster_allocator empty_ca{empty_uset, {}};
     BOOST_REQUIRE(empty_ca.alloc() == std::nullopt);
+}
+
+BOOST_AUTO_TEST_CASE(cluster_allocator_small) {
+    std::unordered_set<fs::cluster_id_t> empty_uset;
     std::deque<fs::cluster_id_t> deq{1, 5, 3, 4, 2};
     fs::cluster_allocator small_ca(empty_uset, deq);
     BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[0]);
@@ -71,8 +74,12 @@ BOOST_AUTO_TEST_CASE(cluster_allocator) {
     BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[3]);
     small_ca.free(deq[4]);
     BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[2]);
+}
 
+BOOST_AUTO_TEST_CASE(cluster_allocator_max) {
+    constexpr fs::cluster_id_t clusters_per_shard = 1024;
     std::deque<fs::cluster_id_t> dq;
+    std::unordered_set<fs::cluster_id_t> empty_uset;
     for (fs::cluster_id_t i = 0; i < clusters_per_shard; i++) {
         dq.emplace_back(i);
     }
@@ -83,8 +90,10 @@ BOOST_AUTO_TEST_CASE(cluster_allocator) {
     for (fs::cluster_id_t i = 0; i < clusters_per_shard; i++) {
         ordinary_ca.free(i);
     }
+}
+BOOST_AUTO_TEST_CASE(cluster_allocator_pseudo_rand) {
     std::unordered_set<fs::cluster_id_t> uset;
-    dq.clear();
+    std::deque<fs::cluster_id_t> dq;
     fs::cluster_id_t elem = 215;
     while (elem != 806) {
         dq.emplace_back(elem);
