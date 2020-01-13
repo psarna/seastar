@@ -27,8 +27,11 @@
 #include <istream>
 #include <array>
 #include <vector>
+#include <stdexcept>
 
 #include <seastar/net/byteorder.hh>
+
+#include "kafka_error_code.hh"
 
 namespace seastar {
 
@@ -75,6 +78,56 @@ public:
             throw parsing_exception("Stream ended prematurely when reading number");
         }
         _value = net::ntoh(*reinterpret_cast<NumberType *>(buffer.data()));
+    }
+};
+
+class kafka_error_code_t {
+private:
+    int16_t _value;
+    static constexpr auto NUMBER_SIZE = sizeof(int16_t);
+
+public:
+    kafka_error_code_t() noexcept : _value(0) {}
+    kafka_error_code_t(const error::kafka_error_code &error) noexcept : _value(error._error_code) {}
+
+    [[nodiscard]] const error::kafka_error_code &operator*() const noexcept {
+        return error::kafka_error_code::get_error(_value);
+    }
+
+    kafka_error_code_t &operator=(const error::kafka_error_code& error) noexcept {
+        _value = error._error_code;
+        return *this;
+    }
+
+    void serialize(std::ostream &os, int16_t api_version) const {
+        std::array<char, NUMBER_SIZE> buffer{};
+        auto value = net::hton(_value);
+        auto value_pointer = reinterpret_cast<const char *>(&value);
+        std::copy(value_pointer, value_pointer + NUMBER_SIZE, buffer.begin());
+
+        os.write(buffer.data(), NUMBER_SIZE);
+    }
+
+    void deserialize(std::istream &is, int16_t api_version) {
+        std::array<char, NUMBER_SIZE> buffer{};
+        is.read(buffer.data(), NUMBER_SIZE);
+        if (is.gcount() != NUMBER_SIZE) {
+            throw parsing_exception("Stream ended prematurely when reading number");
+        }
+        _value = net::ntoh(*reinterpret_cast<int16_t *>(buffer.data()));
+        try {
+            error::kafka_error_code::get_error(_value);
+        } catch (const std::out_of_range &e) {
+            throw parsing_exception("Error with such code does not exist");
+        }
+    }
+
+    bool operator==(const error::kafka_error_code &other) const {
+        return other._error_code == this->_value;
+    }
+
+    bool operator!=(const error::kafka_error_code &other) const {
+        return ! (*this == other);
     }
 };
 

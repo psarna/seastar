@@ -22,37 +22,35 @@
 
 #pragma once
 
-#include "kafka_primitives.hh"
-#include "metadata_response.hh"
+#include <string>
+
+#include "../../../../src/kafka/connection/connection_manager.hh"
+#include "../../../../src/kafka/utils/partitioner.hh"
+#include "../../../../src/kafka/producer/metadata_manager.hh"
+#include "../../../../src/kafka/producer/batcher.hh"
+
+#include <seastar/core/future.hh>
+#include <seastar/net/net.hh>
 
 namespace seastar {
 
 namespace kafka {
 
-class metadata_request_topic {
+class kafka_producer {
+private:
+
+    std::string _client_id;
+    lw_shared_ptr<connection_manager> _connection_manager;
+    partitioner _partitioner;
+    lw_shared_ptr<metadata_manager> _metadata_manager;
+    batcher _batcher;
+
 public:
-    kafka_string_t _name;
+    explicit kafka_producer(std::string client_id);
+    seastar::future<> init(std::string server_address, uint16_t port);
+    seastar::future<> produce(std::string topic_name, std::string key, std::string value);
+    seastar::future<> flush();
 
-    void serialize(std::ostream &os, int16_t api_version) const;
-
-    void deserialize(std::istream &is, int16_t api_version);
-};
-
-class metadata_request {
-public:
-    using response_type = metadata_response;
-    static constexpr int16_t API_KEY = 3;
-    static constexpr int16_t MIN_SUPPORTED_VERSION = 1; // Kafka 0.10.0.0
-    static constexpr int16_t MAX_SUPPORTED_VERSION = 8;
-
-    kafka_array_t<metadata_request_topic> _topics;
-    kafka_bool_t _allow_auto_topic_creation;
-    kafka_bool_t _include_cluster_authorized_operations;
-    kafka_bool_t _include_topic_authorized_operations;
-
-    void serialize(std::ostream &os, int16_t api_version) const;
-
-    void deserialize(std::istream &is, int16_t api_version);
 };
 
 }

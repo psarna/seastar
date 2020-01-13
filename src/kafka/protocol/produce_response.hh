@@ -45,7 +45,7 @@ public:
 class produce_response_partition_produce_response {
 public:
     kafka_int32_t _partition_index;
-    kafka_int16_t _error_code;
+    kafka_error_code_t _error_code;
     kafka_int64_t _base_offset;
     kafka_int64_t _log_append_time_ms;
     kafka_int64_t _log_start_offset;
@@ -71,6 +71,7 @@ class produce_response {
 public:
     kafka_array_t<produce_response_topic_produce_response> _responses;
     kafka_int32_t _throttle_time_ms;
+    kafka_error_code_t _error_code;
 
     void serialize(std::ostream &os, int16_t api_version) const;
 

@@ -22,37 +22,31 @@
 
 #pragma once
 
-#include "kafka_primitives.hh"
-#include "metadata_response.hh"
+#include <utility>
+#include <vector>
+
+#include "sender.hh"
+#include "../utils/retry_helper.hh"
 
 namespace seastar {
 
 namespace kafka {
 
-class metadata_request_topic {
+class batcher {
+private:
+    std::vector<sender_message> _messages;
+    lw_shared_ptr<metadata_manager> _metadata_manager;
+    lw_shared_ptr<connection_manager> _connection_manager;
+    retry_helper _retry_helper;
 public:
-    kafka_string_t _name;
+    batcher(lw_shared_ptr<metadata_manager> metadata_manager,
+            lw_shared_ptr<connection_manager> connection_manager)
+            : _metadata_manager(std::move(metadata_manager)),
+            _connection_manager(std::move(connection_manager)),
+            _retry_helper(60, 20, 1000) {}
 
-    void serialize(std::ostream &os, int16_t api_version) const;
-
-    void deserialize(std::istream &is, int16_t api_version);
-};
-
-class metadata_request {
-public:
-    using response_type = metadata_response;
-    static constexpr int16_t API_KEY = 3;
-    static constexpr int16_t MIN_SUPPORTED_VERSION = 1; // Kafka 0.10.0.0
-    static constexpr int16_t MAX_SUPPORTED_VERSION = 8;
-
-    kafka_array_t<metadata_request_topic> _topics;
-    kafka_bool_t _allow_auto_topic_creation;
-    kafka_bool_t _include_cluster_authorized_operations;
-    kafka_bool_t _include_topic_authorized_operations;
-
-    void serialize(std::ostream &os, int16_t api_version) const;
-
-    void deserialize(std::istream &is, int16_t api_version);
+    void queue_message(sender_message message);
+    future<> flush();
 };
 
 }

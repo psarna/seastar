@@ -22,37 +22,26 @@
 
 #pragma once
 
-#include "kafka_primitives.hh"
-#include "metadata_response.hh"
+#include "../connection/connection_manager.hh"
+#include <seastar/core/future.hh>
 
 namespace seastar {
 
 namespace kafka {
 
-class metadata_request_topic {
+class metadata_manager {
+
+private:
+    lw_shared_ptr<connection_manager> _connection_manager;
+    metadata_response _metadata;
+
 public:
-    kafka_string_t _name;
+    metadata_manager(lw_shared_ptr<connection_manager>& manager)
+    : _connection_manager(manager) {}
 
-    void serialize(std::ostream &os, int16_t api_version) const;
+    seastar::future<metadata_response> refresh_metadata();
+    metadata_response& get_metadata();
 
-    void deserialize(std::istream &is, int16_t api_version);
-};
-
-class metadata_request {
-public:
-    using response_type = metadata_response;
-    static constexpr int16_t API_KEY = 3;
-    static constexpr int16_t MIN_SUPPORTED_VERSION = 1; // Kafka 0.10.0.0
-    static constexpr int16_t MAX_SUPPORTED_VERSION = 8;
-
-    kafka_array_t<metadata_request_topic> _topics;
-    kafka_bool_t _allow_auto_topic_creation;
-    kafka_bool_t _include_cluster_authorized_operations;
-    kafka_bool_t _include_topic_authorized_operations;
-
-    void serialize(std::ostream &os, int16_t api_version) const;
-
-    void deserialize(std::istream &is, int16_t api_version);
 };
 
 }

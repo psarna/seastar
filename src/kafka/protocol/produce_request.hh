@@ -24,6 +24,7 @@
 
 #include "kafka_primitives.hh"
 #include "kafka_records.hh"
+#include "produce_response.hh"
 
 namespace seastar {
 
@@ -51,6 +52,11 @@ public:
 
 class produce_request {
 public:
+    using response_type = produce_response;
+    static constexpr int16_t API_KEY = 0;
+    static constexpr int16_t MIN_SUPPORTED_VERSION = 2; // Kafka 0.10.0.0
+    static constexpr int16_t MAX_SUPPORTED_VERSION = 8;
+
     kafka_nullable_string_t _transactional_id;
     kafka_int16_t _acks;
     kafka_int32_t _timeout_ms;

@@ -31,21 +31,27 @@ namespace seastar {
 
 namespace kafka {
 
+struct tcp_connection_exception : public std::runtime_error {
+public:
+    tcp_connection_exception(const std::string& message) : runtime_error(message) {}
+};
+
 class tcp_connection {
 
     net::inet_address _host;
     uint16_t _port;
+    uint32_t _timeout_ms;
     connected_socket _fd;
     input_stream<char> _read_buf;
     output_stream<char> _write_buf;
 
 public:
+    static future<lw_shared_ptr<tcp_connection>> connect(const std::string& host, uint16_t port, uint32_t timeout_ms);
 
-    static future<lw_shared_ptr<tcp_connection>> connect(const std::string& host, uint16_t port);
-
-    tcp_connection(const net::inet_address& host, uint16_t port, connected_socket&& fd) noexcept
+    tcp_connection(const net::inet_address& host, uint16_t port, uint32_t timeout_ms, connected_socket&& fd) noexcept
             : _host(host)
             , _port(port)
+            , _timeout_ms(timeout_ms)
             , _fd(std::move(fd))
             , _read_buf(_fd.input())
             , _write_buf(_fd.output()) {};

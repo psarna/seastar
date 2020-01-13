@@ -30,18 +30,19 @@ using namespace seastar;
 // on address BROKER_ADDRESS
 constexpr char BROKER_ADDRESS[] = "172.13.0.1";
 constexpr uint16_t PORT = 9092;
+constexpr auto TIMEOUT = 1000;
 
 constexpr char message_str[] = "\x00\x00\x00\x0E\x00\x12\x00\x02\x00\x00\x00\x00\x00\x04\x74\x65\x73\x74";
 constexpr size_t message_len = sizeof(message_str);
 
 SEASTAR_THREAD_TEST_CASE(kafka_establish_connection_test) {
-    kafka::tcp_connection::connect(BROKER_ADDRESS, PORT).get();
+    kafka::tcp_connection::connect(BROKER_ADDRESS, PORT, TIMEOUT).get();
 }
 
 SEASTAR_THREAD_TEST_CASE(kafka_connection_write_without_errors_test) {
     temporary_buffer<char> message {message_str, message_len};
 
-    auto conn = kafka::tcp_connection::connect(BROKER_ADDRESS, PORT).get0();
+    auto conn = kafka::tcp_connection::connect(BROKER_ADDRESS, PORT, TIMEOUT).get0();
     conn->write(message.clone()).get();
     conn->close().get();
 }
@@ -74,7 +75,7 @@ SEASTAR_THREAD_TEST_CASE(kafka_connection_successful_write_read_routine_test) {
 
     temporary_buffer<char> message {message_str, message_len};
 
-    auto conn = kafka::tcp_connection::connect(BROKER_ADDRESS, PORT).get0();
+    auto conn = kafka::tcp_connection::connect(BROKER_ADDRESS, PORT, TIMEOUT).get0();
     conn->write(message.clone()).get();
     auto buff = conn->read(correct_response.length()).get0();
     std::string response {buff.get(), buff.size()};

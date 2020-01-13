@@ -33,6 +33,8 @@
 #include "../../src/kafka/protocol/kafka_records.hh"
 #include "../../src/kafka/protocol/produce_request.hh"
 #include "../../src/kafka/protocol/produce_response.hh"
+#include "../../src/kafka/protocol/headers.hh"
+#include "../../src/kafka/protocol/kafka_error_code.hh"
 
 using namespace seastar;
 
@@ -155,6 +157,40 @@ BOOST_AUTO_TEST_CASE(kafka_primitives_array_test) {
     BOOST_REQUIRE_EQUAL(*strings[1], "fg");
 }
 
+
+BOOST_AUTO_TEST_CASE(kafka_request_header_parsing_test) {
+    kafka::request_header header;
+    test_deserialize_serialize({
+        0x00, 0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x42, 0x00, 0x05, 0x61, 0x62, 0x63, 0x64, 0x65
+    }, header, 0);
+
+    BOOST_REQUIRE_EQUAL(*header._api_key, 5);
+    BOOST_REQUIRE_EQUAL(*header._api_version, 1);
+    BOOST_REQUIRE_EQUAL(*header._correlation_id, 0x42);
+    BOOST_REQUIRE_EQUAL(*header._client_id, "abcde");
+}
+
+BOOST_AUTO_TEST_CASE(kafka_response_header_parsing_test) {
+    kafka::response_header header;
+    test_deserialize_serialize({
+        0x00, 0x05, 0x00, 0x01
+    }, header, 0);
+
+    BOOST_REQUIRE_EQUAL(*header._correlation_id, 0x50001);
+}
+
+BOOST_AUTO_TEST_CASE(kafka_primitives_error_code_test) {
+    const kafka::error::kafka_error_code &error =
+        kafka::error::kafka_error_code::INVALID_FETCH_SIZE;
+    kafka::kafka_error_code_t error_code(error);
+    BOOST_REQUIRE_EQUAL((*error_code)._error_code, 4);
+    BOOST_REQUIRE_EQUAL(error_code == error, true);
+    BOOST_REQUIRE_EQUAL(error_code != error, false);
+    test_deserialize_serialize({0x00, 0x04}, error_code, 0);
+    BOOST_REQUIRE_EQUAL((*error_code)._error_code, 4);
+    test_deserialize_throw({0xAC, 0x02}, error_code, 0);
+}
+
 BOOST_AUTO_TEST_CASE(kafka_api_versions_response_parsing_test) {
     kafka::api_versions_response response;
     test_deserialize_serialize({
@@ -179,7 +215,10 @@ BOOST_AUTO_TEST_CASE(kafka_api_versions_response_parsing_test) {
     }, response, 2);
 
     BOOST_REQUIRE_EQUAL(*response._throttle_time_ms, 0);
-    BOOST_REQUIRE_EQUAL(*response._error_code, 0);
+    BOOST_REQUIRE(
+        response._error_code ==
+        kafka::error::kafka_error_code::NONE
+    );
     BOOST_REQUIRE_EQUAL(response._api_keys->size(), 45);
     BOOST_REQUIRE_EQUAL(*response._api_keys[0]._api_key, 0);
     BOOST_REQUIRE_EQUAL(*response._api_keys[0]._min_version, 0);
@@ -224,11 +263,17 @@ BOOST_AUTO_TEST_CASE(kafka_metadata_response_parsing_test) {
     BOOST_REQUIRE_EQUAL(*response._cluster_id, "kLZ5jPvDR0Cw1y41Af5HUg");
     BOOST_REQUIRE_EQUAL(*response._controller_id, 0x3e9);
     BOOST_REQUIRE_EQUAL(response._topics->size(), 1);
-    BOOST_REQUIRE_EQUAL(*response._topics[0]._error_code, 0);
+    BOOST_REQUIRE(
+        response._topics[0]._error_code ==
+        kafka::error::kafka_error_code::NONE
+    );
     BOOST_REQUIRE_EQUAL(*response._topics[0]._name, "test5");
     BOOST_REQUIRE(!*response._topics[0]._is_internal);
     BOOST_REQUIRE_EQUAL(response._topics[0]._partitions->size(), 1);
-    BOOST_REQUIRE_EQUAL(*response._topics[0]._partitions[0]._error_code, 0);
+    BOOST_REQUIRE(
+        response._topics[0]._partitions[0]._error_code ==
+        kafka::error::kafka_error_code::NONE
+    );
     BOOST_REQUIRE_EQUAL(*response._topics[0]._partitions[0]._partition_index, 0);
     BOOST_REQUIRE_EQUAL(*response._topics[0]._partitions[0]._leader_id, 0x3e9);
     BOOST_REQUIRE_EQUAL(*response._topics[0]._partitions[0]._leader_epoch, 0);
@@ -431,14 +476,17 @@ BOOST_AUTO_TEST_CASE(kafka_produce_response_parsing_test) {
 
     BOOST_REQUIRE_EQUAL(response._responses->size(), 1);
     BOOST_REQUIRE_EQUAL(*response._throttle_time_ms, 0);
-    
+
     const auto &inner_response = response._responses[0];
     BOOST_REQUIRE_EQUAL(*inner_response._name, "test5");
     BOOST_REQUIRE_EQUAL(inner_response._partitions->size(), 1);
 
     const auto &partition = inner_response._partitions[0];
     BOOST_REQUIRE_EQUAL(*partition._partition_index, 0);
-    BOOST_REQUIRE_EQUAL(*partition._error_code, 0);
+    BOOST_REQUIRE(
+        partition._error_code
+        == kafka::error::kafka_error_code::NONE
+    );
     BOOST_REQUIRE_EQUAL(*partition._base_offset, 0x46);
     BOOST_REQUIRE_EQUAL(*partition._log_append_time_ms, -1);
     BOOST_REQUIRE_EQUAL(*partition._log_start_offset, 0);

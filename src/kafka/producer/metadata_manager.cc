@@ -20,28 +20,27 @@
  * Copyright (C) 2019 ScyllaDB Ltd.
  */
 
-#pragma once
-
-#include <istream>
-#include <ostream>
-
-#include "api_versions_response.hh"
+#include "metadata_manager.hh"
 
 namespace seastar {
 
 namespace kafka {
 
-class api_versions_request {
-public:
-    using response_type = api_versions_response;
-    static constexpr int16_t API_KEY = 18;
-    static constexpr int16_t MIN_SUPPORTED_VERSION = 0;
-    static constexpr int16_t MAX_SUPPORTED_VERSION = 2;
+    seastar::future<metadata_response> metadata_manager::refresh_metadata() {
+        kafka::metadata_request req;
 
-    void serialize(std::ostream &os, int16_t api_version) const;
-    void deserialize(std::istream &is, int16_t api_version);
-};
+        req._allow_auto_topic_creation = true;
+        req._include_cluster_authorized_operations = true;
+        req._include_topic_authorized_operations = true;
 
+        return _connection_manager->ask_for_metadata(req).then([this] (metadata_response metadata){
+            return (_metadata = metadata);
+        });
+    }
+
+    metadata_response& metadata_manager::get_metadata() {
+        return _metadata;
+    }
 }
 
 }

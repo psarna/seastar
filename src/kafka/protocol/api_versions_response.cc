@@ -22,6 +22,8 @@
 
 #include "api_versions_response.hh"
 
+#include <algorithm>
+
 namespace seastar {
 
 namespace kafka {
@@ -38,6 +40,29 @@ void api_versions_response_key::deserialize(std::istream &is, int16_t api_versio
     _max_version.deserialize(is, api_version);
 }
 
+bool api_versions_response_key::operator<(const api_versions_response_key& other) const noexcept {
+    return *_api_key < *other._api_key;
+}
+
+bool api_versions_response_key::operator<(int16_t api_key) const noexcept {
+    return *_api_key < api_key;
+}
+
+api_versions_response_key api_versions_response::operator[](int16_t api_key) const {
+    auto it = std::lower_bound(_api_keys->begin(), _api_keys->end(), api_key);
+    if (it != _api_keys->end() && *it->_api_key == api_key) {
+        return *it;
+    }
+    api_versions_response_key null_response;
+    null_response._api_key = -1;
+    return null_response;
+}
+
+bool api_versions_response::contains(int16_t api_key) const {
+    auto it = std::lower_bound(_api_keys->begin(), _api_keys->end(), api_key);
+    return it != _api_keys->end() && *it->_api_key == api_key;
+}
+
 void api_versions_response::serialize(std::ostream &os, int16_t api_version) const {
     _error_code.serialize(os, api_version);
     _api_keys.serialize(os, api_version);
@@ -49,6 +74,7 @@ void api_versions_response::serialize(std::ostream &os, int16_t api_version) con
 void api_versions_response::deserialize(std::istream &is, int16_t api_version) {
     _error_code.deserialize(is, api_version);
     _api_keys.deserialize(is, api_version);
+    std::sort(_api_keys->begin(), _api_keys->end());
     if (api_version >= 1) {
         _throttle_time_ms.deserialize(is, api_version);
     }

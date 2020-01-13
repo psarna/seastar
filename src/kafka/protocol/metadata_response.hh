@@ -42,7 +42,7 @@ public:
 
 class metadata_response_partition {
 public:
-    kafka_int16_t _error_code;
+    kafka_error_code_t _error_code;
     kafka_int32_t _partition_index;
     kafka_int32_t _leader_id;
     kafka_int32_t _leader_epoch;
@@ -57,7 +57,7 @@ public:
 
 class metadata_response_topic {
 public:
-    kafka_int16_t _error_code;
+    kafka_error_code_t _error_code;
     kafka_string_t _name;
     kafka_bool_t _is_internal;
     kafka_array_t<metadata_response_partition> _partitions;
@@ -76,6 +76,7 @@ public:
     kafka_int32_t _controller_id;
     kafka_array_t<metadata_response_topic> _topics;
     kafka_int32_t _cluster_authorized_operations;
+    kafka_error_code_t _error_code;
 
     void serialize(std::ostream &os, int16_t api_version) const;
 

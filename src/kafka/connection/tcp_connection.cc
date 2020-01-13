@@ -26,27 +26,43 @@ namespace seastar {
 
 namespace kafka {
 
-future<lw_shared_ptr<tcp_connection>> tcp_connection::connect(const std::string& host, uint16_t port) {
+auto timeout_end(uint32_t timeout_ms) {
+    return std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+}
+
+future<lw_shared_ptr<tcp_connection>> tcp_connection::connect(const std::string& host, uint16_t port,
+        uint32_t timeout_ms) {
     net::inet_address target_host = net::inet_address{host};
     sa_family_t family = target_host.is_ipv4() ? sa_family_t(AF_INET) : sa_family_t(AF_INET6);
     socket_address socket = socket_address(::sockaddr_in{family, INADDR_ANY, {0}});
     auto f = target_host.is_ipv4()
             ? engine().net().connect(ipv4_addr{target_host, port}, socket, transport::TCP)
             : engine().net().connect(ipv6_addr{target_host, port}, socket, transport::TCP);
-    return f.then([target_host = std::move(target_host), port] (connected_socket fd) {
-                return make_lw_shared<tcp_connection>(target_host, port, std::move(fd));
+    auto f_timeout = seastar::with_timeout(timeout_end(timeout_ms), std::move(f));
+    return f_timeout.then([target_host = std::move(target_host), timeout_ms, port] (connected_socket fd) {
+                return make_lw_shared<tcp_connection>(target_host, port, timeout_ms, std::move(fd));
             }
     );
 }
 
 future<temporary_buffer<char>> tcp_connection::read(size_t bytes) {
-    return _read_buf.read_exactly(bytes);
+    auto f = _read_buf.read_exactly(bytes)
+        .then([this, bytes](temporary_buffer<char> data) {
+            if (data.size() != bytes) {
+                _fd.shutdown_input();
+                _fd.shutdown_output();
+                throw tcp_connection_exception("Connection ended prematurely");
+            }
+            return data;
+        });
+    return seastar::with_timeout(timeout_end(_timeout_ms), std::move(f));
 }
 
 future<> tcp_connection::write(temporary_buffer<char> buff) {
-    return _write_buf.write(std::move(buff)).then([this] {
+    auto f = _write_buf.write(std::move(buff)).then([this] {
         return _write_buf.flush();
     });
+    return seastar::with_timeout(timeout_end(_timeout_ms), std::move(f));
 }
 
 future<> tcp_connection::close() {

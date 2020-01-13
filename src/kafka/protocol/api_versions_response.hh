@@ -28,11 +28,19 @@ namespace seastar {
 
 namespace kafka {
 
+struct unsupported_version_exception : public std::runtime_error {
+public:
+    unsupported_version_exception(const std::string& message) : runtime_error(message) {}
+};
+
 class api_versions_response_key {
 public:
     kafka_int16_t _api_key;
     kafka_int16_t _min_version;
     kafka_int16_t _max_version;
+
+    bool operator<(const api_versions_response_key& other) const noexcept;
+    bool operator<(int16_t api_key) const noexcept;
 
     void serialize(std::ostream &os, int16_t api_version) const;
 
@@ -41,9 +49,26 @@ public:
 
 class api_versions_response {
 public:
-    kafka_int16_t _error_code;
+    kafka_error_code_t _error_code;
     kafka_array_t<api_versions_response_key> _api_keys;
     kafka_int32_t _throttle_time_ms;
+
+    template<typename RequestType>
+    int16_t max_version() const {
+        auto broker_versions = (*this)[RequestType::API_KEY];
+        if (*broker_versions._api_key == -1) {
+            throw unsupported_version_exception("Broker does not support specific request");
+        }
+        if (*broker_versions._max_version < RequestType::MIN_SUPPORTED_VERSION) {
+            throw unsupported_version_exception("Broker is too old");
+        }
+        if (*broker_versions._min_version > RequestType::MAX_SUPPORTED_VERSION) {
+            throw unsupported_version_exception("Broker is too new");
+        }
+        return std::min(*broker_versions._max_version, RequestType::MAX_SUPPORTED_VERSION);
+    }
+    bool contains(int16_t api_key) const;
+    api_versions_response_key operator[](int16_t api_key) const;
 
     void serialize(std::ostream &os, int16_t api_version) const;
 
