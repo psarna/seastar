@@ -23,6 +23,7 @@
 
 #include "seastar/core/file.hh"
 #include "seastar/core/reactor.hh"
+#include "seastar/fs/unit_types.hh"
 
 namespace seastar::fs {
 
@@ -33,6 +34,7 @@ public:
     virtual future<size_t> write(uint64_t aligned_pos, const void* aligned_buffer, size_t aligned_len, const io_priority_class& pc) = 0;
     virtual future<size_t> read(uint64_t aligned_pos, void* aligned_buffer, size_t aligned_len, const io_priority_class& pc) = 0;
     virtual future<> flush() = 0;
+    virtual future<disk_offset_t> size() = 0;
     virtual future<> close() = 0;
 };
 
@@ -64,6 +66,10 @@ public:
         return _block_device_impl->flush();
     }
 
+    future<disk_offset_t> size() {
+        return _block_device_impl->size();
+    };
+
     future<> close() {
         return _block_device_impl->close();
     }
@@ -87,6 +93,10 @@ public:
     future<> flush() override {
         return _file.flush();
     }
+
+    future<disk_offset_t> size() override {
+        return _file.size();
+    };
 
     future<> close() override {
         return _file.close();
