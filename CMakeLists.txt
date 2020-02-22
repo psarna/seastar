@@ -681,6 +681,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/path.hh
     src/fs/range.hh
     src/fs/units.hh
+    src/fs/value_shared_lock.hh
   )
 endif()
 
