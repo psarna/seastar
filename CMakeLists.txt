@@ -695,6 +695,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/to_disk_buffer.hh
     src/fs/unix_metadata.hh
     src/fs/val_or_err.hh
+    src/fs/value_shared_lock.hh
   )
 endif()
 
