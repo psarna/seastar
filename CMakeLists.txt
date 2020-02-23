@@ -670,6 +670,7 @@ if (Seastar_EXPERIMENTAL_FS)
     # SeastarFS source files
     include/seastar/fs/bitwise.hh
     include/seastar/fs/block_device.hh
+    include/seastar/fs/overloaded.hh
     include/seastar/fs/range.hh
     include/seastar/fs/unit_types.hh
     src/fs/backend/cluster_allocator.cc
