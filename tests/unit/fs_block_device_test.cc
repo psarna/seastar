@@ -21,6 +21,7 @@
 
 #include "seastar/core/do_with.hh"
 #include "seastar/core/future-util.hh"
+#include "seastar/core/temporary_buffer.hh"
 
 #include <boost/range/irange.hpp>
 #include <random>
@@ -38,38 +39,35 @@ using namespace seastar::fs;
 constexpr off_t min_device_size = 16*MB;
 constexpr size_t alignment = 4*KB;
 
-static auto allocate_aligned_buffer(size_t size) {
-    return allocate_aligned_buffer<char>(size, alignment);
-}
-
-static auto allocate_random_aligned_buffer(size_t size) {
-    auto buffer = allocate_aligned_buffer(size);
-    std::default_random_engine random_engine(testing::local_random_engine());
-    std::uniform_int_distribution<> character(0, sizeof(char) * 8 - 1);
-    for (size_t i = 0; i < size; ++i) {
-        buffer[i] = character(random_engine);
-    }
-    return buffer;
+static future<temporary_buffer<char>> allocate_random_aligned_buffer(size_t size) {
+    return do_with(temporary_buffer<char>::aligned(alignment, size), std::default_random_engine(testing::local_random_engine()), [size](auto& buffer, auto& random_engine) {
+        return do_for_each(buffer.get_write(), buffer.get_write() + size, [&](char& c) {
+            std::uniform_int_distribution<> character(0, sizeof(char) * 8 - 1);
+            c = character(random_engine);
+        }).then([&buffer] {
+            return std::move(buffer);
+        });
+    });
 }
 
 static future<> test_basic_read_write(const std::string& device_path) {
     return async([&] {
         block_device dev = open_block_device(device_path).get0();
         constexpr size_t buff_size = 16*KB;
-        auto buffer = allocate_random_aligned_buffer(buff_size);
-        auto check_buffer = allocate_random_aligned_buffer(buff_size);
+        auto buffer = allocate_random_aligned_buffer(buff_size).get0();
+        auto check_buffer = allocate_random_aligned_buffer(buff_size).get0();
 
         // Write and read
         assert(dev.write(0, buffer.get(), buff_size).get0() == buff_size);
-        assert(dev.read(0, check_buffer.get(), buff_size).get0() == buff_size);
-        assert(memcmp(buffer.get(), check_buffer.get(), buff_size) == 0);
+        assert(dev.read(0, check_buffer.get_write(), buff_size).get0() == buff_size);
+        assert(std::memcmp(buffer.get(), check_buffer.get(), buff_size) == 0);
 
         // Data have to remain after closing
         dev.close().get0();
         dev = open_block_device(device_path).get0();
-        check_buffer = allocate_random_aligned_buffer(buff_size); // Make sure the buffer is written
-        assert(dev.read(0, check_buffer.get(), buff_size).get0() == buff_size);
-        assert(memcmp(buffer.get(), check_buffer.get(), buff_size) == 0);
+        check_buffer = allocate_random_aligned_buffer(buff_size).get0(); // Make sure the buffer is written
+        assert(dev.read(0, check_buffer.get_write(), buff_size).get0() == buff_size);
+        assert(std::memcmp(buffer.get(), check_buffer.get(), buff_size) == 0);
 
         dev.close().get0();
     });
@@ -79,7 +77,7 @@ static future<> test_parallel_read_write(const std::string& device_path) {
     return async([&] {
         block_device dev = open_block_device(device_path).get0();
         constexpr size_t buff_size = 16*MB;
-        auto buffer = allocate_random_aligned_buffer(buff_size);
+        auto buffer = allocate_random_aligned_buffer(buff_size).get0();
 
         // Write
         static_assert(buff_size % alignment == 0);
@@ -95,9 +93,9 @@ static future<> test_parallel_read_write(const std::string& device_path) {
         parallel_for_each(boost::irange<off_t>(0, buff_size / alignment), [&](off_t block_no) {
             return async([&dev, &buffer, block_no] {
                 off_t offset = block_no * alignment;
-                auto check_buffer = allocate_random_aligned_buffer(alignment);
-                assert(dev.read(offset, check_buffer.get(), alignment).get0() == alignment);
-                assert(memcmp(buffer.get() + offset, check_buffer.get(), alignment) == 0);
+                auto check_buffer = allocate_random_aligned_buffer(alignment).get0();
+                assert(dev.read(offset, check_buffer.get_write(), alignment).get0() == alignment);
+                assert(std::memcmp(buffer.get() + offset, check_buffer.get(), alignment) == 0);
             });
         }).get0();
 
@@ -109,7 +107,7 @@ static future<> test_simultaneous_parallel_read_and_write(const std::string& dev
     return async([&] {
         block_device dev = open_block_device(device_path).get0();
         constexpr size_t buff_size = 16*MB;
-        auto buffer = allocate_random_aligned_buffer(buff_size);
+        auto buffer = allocate_random_aligned_buffer(buff_size).get0();
         assert(dev.write(0, buffer.get(), buff_size).get0() == buff_size);
 
         static_assert(buff_size % alignment == 0);
@@ -123,7 +121,7 @@ static future<> test_simultaneous_parallel_read_and_write(const std::string& dev
         }
 
         // Perform simultaneous reads and writes
-        auto new_buffer = allocate_random_aligned_buffer(buff_size);
+        auto new_buffer = allocate_random_aligned_buffer(buff_size).get0();
         auto write_fut = parallel_for_each(boost::irange<off_t>(0, blocks_num), [&](off_t block_no) {
             if (block_kind[block_no] != WRITE) {
                 return now();
@@ -141,9 +139,9 @@ static future<> test_simultaneous_parallel_read_and_write(const std::string& dev
 
             return async([&dev, &buffer, block_no] {
                 off_t offset = block_no * alignment;
-                auto check_buffer = allocate_random_aligned_buffer(alignment);
-                assert(dev.read(offset, check_buffer.get(), alignment).get0() == alignment);
-                assert(memcmp(buffer.get() + offset, check_buffer.get(), alignment) == 0);
+                auto check_buffer = allocate_random_aligned_buffer(alignment).get0();
+                assert(dev.read(offset, check_buffer.get_write(), alignment).get0() == alignment);
+                assert(std::memcmp(buffer.get() + offset, check_buffer.get(), alignment) == 0);
             });
         });
 
@@ -153,10 +151,10 @@ static future<> test_simultaneous_parallel_read_and_write(const std::string& dev
         parallel_for_each(boost::irange<off_t>(0, blocks_num), [&](off_t block_no) {
             return async([&dev, &buffer, &new_buffer, &block_kind, block_no] {
                 off_t offset = block_no * alignment;
-                auto check_buffer = allocate_random_aligned_buffer(alignment);
-                assert(dev.read(offset, check_buffer.get(), alignment).get0() == alignment);
+                auto check_buffer = allocate_random_aligned_buffer(alignment).get0();
+                assert(dev.read(offset, check_buffer.get_write(), alignment).get0() == alignment);
                 auto& orig_buff = (block_kind[block_no] == WRITE ? new_buffer : buffer);
-                assert(memcmp(orig_buff.get() + offset, check_buffer.get(), alignment) == 0);
+                assert(std::memcmp(orig_buff.get() + offset, check_buffer.get(), alignment) == 0);
             });
         }).get0();
 
@@ -188,7 +186,7 @@ int main(int argc, char** argv) {
         return async([&] {
             auto& args = app.configuration();
             std::optional<temporary_file> tmp_device_file;
-            sstring device_path = [&]() -> sstring {
+            std::string device_path = [&]() -> std::string {
                 if (args.count("dev")) {
                     return args["dev"].as<std::string>();
                 }
