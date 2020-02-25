@@ -674,7 +674,10 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/unit_types.hh
     src/fs/backend/cluster_allocator.cc
     src/fs/backend/cluster_allocator.hh
+    src/fs/bootstrap_record.cc
+    src/fs/bootstrap_record.hh
     src/fs/cluster_utils.hh
+    src/fs/crc.hh
     src/fs/inode_utils.hh
     src/fs/temporary_file.hh
     src/fs/val_or_err.hh
