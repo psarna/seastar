@@ -363,6 +363,9 @@ if (Seastar_EXPERIMENTAL_FS)
   seastar_add_app_test (fs_block_device
     SOURCES fs_block_device_test.cc
     LIBRARIES seastar_testing)
+  seastar_add_test (fs_backend_cluster_allocator
+    KIND BOOST
+    SOURCES fs_backend_cluster_allocator_test.cc)
   seastar_add_test (fs_val_or_err
     KIND BOOST
     SOURCES fs_val_or_err_test.cc)
