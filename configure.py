@@ -106,6 +106,11 @@ add_tristate(
     name = 'unused-result-error',
     dest = "unused_result_error",
     help = 'Make [[nodiscard]] violations an error')
+add_tristate(
+    arg_parser,
+    name = 'experimental-fs',
+    dest = "experimental_fs",
+    help = 'experimental support for SeastarFS')
 arg_parser.add_argument('--allocator-page-size', dest='alloc_page_size', type=int, help='override allocator page size')
 arg_parser.add_argument('--without-tests', dest='exclude_tests', action='store_true', help='Do not build tests by default')
 arg_parser.add_argument('--without-apps', dest='exclude_apps', action='store_true', help='Do not build applications by default')
@@ -201,6 +206,7 @@ def configure_mode(mode):
         tr(args.heap_profiling, 'HEAP_PROFILING'),
         tr(args.coroutines_ts, 'EXPERIMENTAL_COROUTINES_TS'),
         tr(args.unused_result_error, 'UNUSED_RESULT_ERROR'),
+        tr(args.experimental_fs, 'EXPERIMENTAL_FS'),
     ]
 
     ingredients_to_cook = set(args.cook)

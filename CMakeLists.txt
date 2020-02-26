@@ -281,6 +281,10 @@ set (Seastar_STACK_GUARDS
   STRING
   "Enable stack guards. Can be ON, OFF or DEFAULT (which enables it for non release builds)")
 
+option (Seastar_EXPERIMENTAL_FS
+  "Compile experimental SeastarFS sources (requires C++17 support)"
+  OFF)
+
 # When Seastar is embedded with `add_subdirectory`, disable the non-library targets.
 if (NOT (CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR))
   set (Seastar_APPS OFF)
@@ -647,6 +651,14 @@ add_library (seastar STATIC
   src/util/tmp_file.cc)
 
 add_library (Seastar::seastar ALIAS seastar)
+
+if (Seastar_EXPERIMENTAL_FS)
+  message(STATUS "Experimental SeastarFS is enabled")
+  target_sources(seastar
+    PRIVATE
+    # SeastarFS source files
+  )
+endif()
 
 add_dependencies (seastar
   seastar_http_request_parser
