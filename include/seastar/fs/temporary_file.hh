@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "fs/units.hh"
 #include "seastar/core/posix.hh"
 
 #include <string>
@@ -45,6 +46,10 @@ public:
     temporary_file& operator=(const temporary_file&) = delete;
     temporary_file(temporary_file&&) noexcept = delete;
     temporary_file& operator=(temporary_file&&) noexcept = delete;
+
+    void truncate(disk_offset_t length) const {
+        throw_system_error_on(::truncate(_path.data(), length) == -1);
+    }
 
     const std::string& path() const noexcept {
         return _path;
