@@ -55,6 +55,11 @@ public:
         return make_ready_future<>();
     }
 
+    future<> truncate(disk_offset_t length) noexcept {
+        buf.resize(length);
+        return make_ready_future<>();
+    }
+
     future<disk_offset_t> size() noexcept override {
         return make_ready_future<disk_offset_t>(buf.size());
     }
