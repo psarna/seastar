@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include "fs/units.hh"
+
 #include <cstring>
 #include <seastar/fs/block_device.hh>
 
@@ -44,6 +46,11 @@ public:
     future<size_t> read(uint64_t pos, void* buffer, size_t len, const io_priority_class&) noexcept override;
 
     future<> flush() noexcept override {
+        return make_ready_future<>();
+    }
+
+    future<> truncate(disk_offset_t length) noexcept {
+        buf.resize(length);
         return make_ready_future<>();
     }
 
