@@ -669,6 +669,7 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/exceptions.hh
     include/seastar/fs/file.hh
     include/seastar/fs/overloaded.hh
+    include/seastar/fs/stat.hh
     include/seastar/fs/temporary_file.hh
     src/fs/bitwise.hh
     src/fs/bootstrap_record.cc
