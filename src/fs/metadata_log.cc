@@ -43,7 +43,9 @@
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
 #include "seastar/core/shared_mutex.hh"
+#include "seastar/fs/exceptions.hh"
 #include "seastar/fs/overloaded.hh"
+#include "seastar/fs/stat.hh"
 
 #include <boost/crc.hpp>
 #include <boost/range/irange.hpp>
@@ -340,7 +342,6 @@ std::variant<inode_t, metadata_log::path_lookup_error> metadata_log::do_path_loo
 }
 
 future<inode_t> metadata_log::path_lookup(const std::string& path) const {
-    auto lookup_res = do_path_lookup(path);
     return std::visit(overloaded {
         [](path_lookup_error error) {
             switch (error) {
@@ -356,7 +357,7 @@ future<inode_t> metadata_log::path_lookup(const std::string& path) const {
         [](inode_t inode) {
             return make_ready_future<inode_t>(inode);
         }
-    }, lookup_res);
+    }, do_path_lookup(path));
 }
 
 file_offset_t metadata_log::file_size(inode_t inode) const {
@@ -373,6 +374,45 @@ file_offset_t metadata_log::file_size(inode_t inode) const {
             throw invalid_inode_exception();
         }
     }, it->second.contents);
+}
+
+stat_data metadata_log::stat(inode_t inode) const {
+    auto it = _inodes.find(inode);
+    if (it == _inodes.end())
+        throw invalid_inode_exception();
+
+    const inode_info& inode_info = it->second;
+    return {
+        std::visit(overloaded {
+            [](const inode_info::file&) { return directory_entry_type::regular; },
+            [](const inode_info::directory&) { return directory_entry_type::directory; },
+        }, inode_info.contents),
+        inode_info.metadata.perms,
+        inode_info.metadata.uid,
+        inode_info.metadata.gid,
+        std::chrono::system_clock::time_point(std::chrono::nanoseconds(inode_info.metadata.btime_ns)),
+        std::chrono::system_clock::time_point(std::chrono::nanoseconds(inode_info.metadata.mtime_ns)),
+        std::chrono::system_clock::time_point(std::chrono::nanoseconds(inode_info.metadata.ctime_ns)),
+    };
+}
+
+stat_data metadata_log::stat(const std::string& path) const {
+    return std::visit(overloaded {
+        [](path_lookup_error error) -> stat_data {
+            switch (error) {
+            case path_lookup_error::NOT_ABSOLUTE:
+                throw path_is_not_absolute_exception();
+            case path_lookup_error::NO_ENTRY:
+                throw no_such_file_or_directory_exception();
+            case path_lookup_error::NOT_DIR:
+                throw path_component_not_directory_exception();
+            }
+            __builtin_unreachable();
+        },
+        [this](inode_t inode) {
+            return stat(inode);
+        }
+    }, do_path_lookup(path));
 }
 
 future<> metadata_log::create_file(std::string path, file_permissions perms) {
