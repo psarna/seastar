@@ -661,6 +661,8 @@ if (Seastar_EXPERIMENTAL_PARQUET)
   target_sources(seastar
     PRIVATE
     # Parquet source files
+    include/seastar/parquet/parquet_types.h
+    src/parquet/parquet_types.cpp
   )
 endif()
 
