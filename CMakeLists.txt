@@ -727,6 +727,12 @@ if ((CMAKE_BUILD_TYPE STREQUAL "Debug") OR (CMAKE_BUILD_TYPE STREQUAL "Sanitize"
       Sanitizers::undefined_behavior)
 endif ()
 
+if (Seastar_EXPERIMENTAL_PARQUET)
+  target_link_libraries (seastar
+    PUBLIC
+      Thrift::thrift)
+endif()
+
 #
 # We want asserts enabled on all modes, but cmake defaults to passing
 # -DNDEBUG in some modes. We add -UNDEBUG to our private options to
@@ -1183,6 +1189,13 @@ if (Seastar_INSTALL)
       ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Findyaml-cpp.cmake
       ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SeastarDependencies.cmake
     DESTINATION ${install_cmakedir})
+
+  if (Seastar_EXPERIMENTAL_PARQUET)
+    install (
+      FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindThrift.cmake
+      DESTINATION ${install_cmakedir})
+  endif()
 
   install (
     DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/cmake/code_tests

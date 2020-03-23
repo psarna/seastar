@@ -75,6 +75,11 @@ macro (seastar_find_dependencies)
     rt
     yaml-cpp)
 
+  if (Seastar_EXPERIMENTAL_PARQUET)
+    list(APPEND _seastar_all_dependencies
+      Thrift)
+  endif()
+
   # Arguments to `find_package` for each 3rd-party dependency.
   # Note that the version specification is a "minimal" version requirement.
 
@@ -102,6 +107,7 @@ macro (seastar_find_dependencies)
   set (_seastar_dep_args_lksctp-tools REQUIRED)
   set (_seastar_dep_args_rt REQUIRED)
   set (_seastar_dep_args_yaml-cpp 0.5.1 REQUIRED)
+  set (_seastar_dep_args_Thrift 0.11.0 REQUIRED)
 
   foreach (third_party ${_seastar_all_dependencies})
     find_package ("${third_party}" ${_seastar_dep_args_${third_party}})
