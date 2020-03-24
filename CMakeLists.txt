@@ -674,6 +674,7 @@ if (Seastar_EXPERIMENTAL_PARQUET)
     include/seastar/parquet/logical_type.hh
     include/seastar/parquet/overloaded.hh
     include/seastar/parquet/parquet_types.h
+    include/seastar/parquet/record_reader.hh
     include/seastar/parquet/rle_encoding.hh
     include/seastar/parquet/reader_schema.hh
     src/parquet/column_chunk_reader.cc
@@ -684,6 +685,7 @@ if (Seastar_EXPERIMENTAL_PARQUET)
     src/parquet/logical_type.cc
     src/parquet/parquet_types.cpp
     src/parquet/reader_schema.cc
+    src/parquet/record_reader.cc
   )
 endif()
 
