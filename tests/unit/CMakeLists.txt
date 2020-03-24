@@ -456,3 +456,7 @@ seastar_add_test (unwind
 seastar_add_test (weak_ptr
   KIND BOOST
   SOURCES weak_ptr_test.cc)
+
+if (Seastar_EXPERIMENTAL_PARQUET)
+    add_subdirectory (parquet)
+endif()
