@@ -19,3 +19,7 @@
 #
 # Copyright (C) 2020 Scylladb, Ltd.
 #
+
+seastar_add_test (rle_encoding
+  KIND BOOST
+  SOURCES rle_encoding_test.cc)

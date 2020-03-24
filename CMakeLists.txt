@@ -661,7 +661,10 @@ if (Seastar_EXPERIMENTAL_PARQUET)
   target_sources(seastar
     PRIVATE
     # Parquet source files
+    include/seastar/parquet/bit_stream_utils.hh
+    include/seastar/parquet/bpacking.hh
     include/seastar/parquet/parquet_types.h
+    include/seastar/parquet/rle_encoding.hh
     src/parquet/parquet_types.cpp
   )
 endif()
