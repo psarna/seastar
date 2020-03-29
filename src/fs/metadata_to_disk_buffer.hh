@@ -157,6 +157,19 @@ public:
         return append_simple(CREATE_INODE, create_inode);
     }
 
+    [[nodiscard]] virtual append_result append(const ondisk_create_inode_as_dir_entry_header& create_inode_as_dir_entry,
+            const void* entry_name) noexcept {
+        ondisk_type type = CREATE_INODE_AS_DIR_ENTRY;
+        if (not fits_for_append(ondisk_entry_size(create_inode_as_dir_entry))) {
+            return TOO_BIG;
+        }
+
+        append_bytes(&type, sizeof(type));
+        append_bytes(&create_inode_as_dir_entry, sizeof(create_inode_as_dir_entry));
+        append_bytes(entry_name, create_inode_as_dir_entry.entry_name_length);
+        return APPENDED;
+    }
+
     using to_disk_buffer::flush_to_disk;
 };
 
