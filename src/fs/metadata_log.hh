@@ -161,6 +161,7 @@ class metadata_log {
     friend class create_and_open_unlinked_file_operation;
     friend class create_file_operation;
     friend class link_file_operation;
+    friend class read_operation;
     friend class truncate_operation;
     friend class unlink_or_remove_file_operation;
     friend class write_operation;
@@ -336,6 +337,10 @@ public:
     future<inode_t> open_file(std::string path);
 
     future<> close_file(inode_t inode);
+
+    // Unaligned reads and writes are supported but discouraged because of bad performance impact
+    future<size_t> read(inode_t inode, file_offset_t pos, void* buffer, size_t len,
+            const io_priority_class& pc = default_priority_class());
 
     future<size_t> write(inode_t inode, file_offset_t pos, const void* buffer, size_t len,
             const io_priority_class& pc = default_priority_class());
