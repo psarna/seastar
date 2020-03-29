@@ -689,6 +689,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/metadata_log_operations/create_and_open_unlinked_file.hh
     src/fs/metadata_log_operations/create_file.hh
     src/fs/metadata_log_operations/link_file.hh
+    src/fs/metadata_log_operations/read.hh
     src/fs/metadata_log_operations/truncate.hh
     src/fs/metadata_log_operations/unlink_or_remove_file.hh
     src/fs/metadata_log_operations/write.hh
