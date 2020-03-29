@@ -185,6 +185,10 @@ public:
         return append_simple(LARGE_WRITE_WITHOUT_MTIME, large_write_without_mtime);
     }
 
+    [[nodiscard]] virtual append_result append(const ondisk_truncate& truncate) noexcept {
+        return append_simple(TRUNCATE, truncate);
+    }
+
     [[nodiscard]] virtual append_result append(const ondisk_add_dir_entry_header& add_dir_entry, const void* entry_name) noexcept {
         ondisk_type type = ADD_DIR_ENTRY;
         if (not fits_for_append(ondisk_entry_size(add_dir_entry))) {
