@@ -211,6 +211,8 @@ future<> metadata_log_bootstrap::bootstrap_checkpointed_data() {
                 return invalid_entry_exception();
             case NEXT_METADATA_CLUSTER:
                 return bootstrap_next_metadata_cluster();
+            case CREATE_INODE:
+                return bootstrap_create_inode();
             }
 
             // unknown type => metadata log corruption
@@ -240,6 +242,17 @@ future<> metadata_log_bootstrap::bootstrap_next_metadata_cluster() {
 
 bool metadata_log_bootstrap::inode_exists(inode_t inode) {
     return _metadata_log._inodes.count(inode) != 0;
+}
+
+future<> metadata_log_bootstrap::bootstrap_create_inode() {
+    ondisk_create_inode entry;
+    if (not _curr_checkpoint.read_entry(entry) or inode_exists(entry.inode)) {
+        return invalid_entry_exception();
+    }
+
+    _metadata_log.memory_only_create_inode(entry.inode, entry.is_directory,
+            ondisk_metadata_to_metadata(entry.metadata));
+    return now();
 }
 
 future<> metadata_log_bootstrap::bootstrap(metadata_log& metadata_log, inode_t root_dir, cluster_id_t first_metadata_cluster_id,

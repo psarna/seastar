@@ -152,6 +152,11 @@ private:
     }
 
 public:
+    [[nodiscard]] virtual append_result append(const ondisk_create_inode& create_inode) noexcept {
+        // TODO: maybe add a constexpr static field to each ondisk_* entry specifying what type it is?
+        return append_simple(CREATE_INODE, create_inode);
+    }
+
     using to_disk_buffer::flush_to_disk;
 };
 
