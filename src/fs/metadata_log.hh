@@ -319,6 +319,9 @@ public:
     // Removes empty directory or unlinks file
     future<> remove(std::string path);
 
+    // TODO: what about permissions, uid, gid etc.
+    future<inode_t> open_file(std::string path);
+
     // All disk-related errors will be exposed here
     future<> flush_log() {
         return flush_curr_cluster();
