@@ -26,6 +26,7 @@
 #include "fs/metadata_disk_entries.hh"
 #include "fs/metadata_log.hh"
 #include "fs/metadata_log_bootstrap.hh"
+#include "fs/metadata_log_operations/create_and_open_unlinked_file.hh"
 #include "fs/metadata_to_disk_buffer.hh"
 #include "fs/path.hh"
 #include "fs/units.hh"
@@ -78,6 +79,22 @@ future<> metadata_log::shutdown() {
     return flush_log().then([this] {
         return _device.close();
     });
+}
+
+inode_info& metadata_log::memory_only_create_inode(inode_t inode, bool is_directory, unix_metadata metadata) {
+    assert(_inodes.count(inode) == 0);
+    return _inodes.emplace(inode, inode_info {
+        0,
+        0,
+        metadata,
+        [&]() -> decltype(inode_info::contents) {
+            if (is_directory) {
+                return inode_info::directory {};
+            }
+
+            return inode_info::file {};
+        }()
+    }).first->second;
 }
 
 void metadata_log::schedule_flush_of_curr_cluster() {
@@ -211,6 +228,10 @@ file_offset_t metadata_log::file_size(inode_t inode) const {
             throw invalid_inode_exception();
         }
     }, it->second.contents);
+}
+
+future<inode_t> metadata_log::create_and_open_unlinked_file(file_permissions perms) {
+    return create_and_open_unlinked_file_operation::perform(*this, std::move(perms));
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,

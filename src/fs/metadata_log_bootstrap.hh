@@ -115,6 +115,8 @@ class metadata_log_bootstrap {
 
     bool inode_exists(inode_t inode);
 
+    future<> bootstrap_create_inode();
+
 public:
     static future<> bootstrap(metadata_log& metadata_log, inode_t root_dir, cluster_id_t first_metadata_cluster_id,
             cluster_range available_clusters, fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id);

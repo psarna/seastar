@@ -27,10 +27,52 @@
 
 namespace seastar::fs {
 
+struct ondisk_unix_metadata {
+    uint32_t perms;
+    uint32_t uid;
+    uint32_t gid;
+    uint64_t btime_ns;
+    uint64_t mtime_ns;
+    uint64_t ctime_ns;
+} __attribute__((packed));
+
+static_assert(sizeof(decltype(ondisk_unix_metadata::perms)) >= sizeof(decltype(unix_metadata::perms)));
+static_assert(sizeof(decltype(ondisk_unix_metadata::uid)) >= sizeof(decltype(unix_metadata::uid)));
+static_assert(sizeof(decltype(ondisk_unix_metadata::gid)) >= sizeof(decltype(unix_metadata::gid)));
+static_assert(sizeof(decltype(ondisk_unix_metadata::btime_ns)) >= sizeof(decltype(unix_metadata::btime_ns)));
+static_assert(sizeof(decltype(ondisk_unix_metadata::mtime_ns)) >= sizeof(decltype(unix_metadata::mtime_ns)));
+static_assert(sizeof(decltype(ondisk_unix_metadata::ctime_ns)) >= sizeof(decltype(unix_metadata::ctime_ns)));
+
+inline unix_metadata ondisk_metadata_to_metadata(const ondisk_unix_metadata& ondisk_metadata) noexcept {
+    unix_metadata res;
+    static_assert(sizeof(ondisk_metadata) == 36,
+            "metadata size changed: check if above static asserts and below assignments need update");
+    res.perms = static_cast<file_permissions>(ondisk_metadata.perms);
+    res.uid = ondisk_metadata.uid;
+    res.gid = ondisk_metadata.gid;
+    res.btime_ns = ondisk_metadata.btime_ns;
+    res.mtime_ns = ondisk_metadata.mtime_ns;
+    res.ctime_ns = ondisk_metadata.ctime_ns;
+    return res;
+}
+
+inline ondisk_unix_metadata metadata_to_ondisk_metadata(const unix_metadata& metadata) noexcept {
+    ondisk_unix_metadata res;
+    static_assert(sizeof(res) == 36, "metadata size changed: check if below assignments need update");
+    res.perms = static_cast<decltype(res.perms)>(metadata.perms);
+    res.uid = metadata.uid;
+    res.gid = metadata.gid;
+    res.btime_ns = metadata.btime_ns;
+    res.mtime_ns = metadata.mtime_ns;
+    res.ctime_ns = metadata.ctime_ns;
+    return res;
+}
+
 enum ondisk_type : uint8_t {
     INVALID = 0,
     CHECKPOINT,
     NEXT_METADATA_CLUSTER,
+    CREATE_INODE,
 };
 
 struct ondisk_checkpoint {
@@ -54,9 +96,16 @@ struct ondisk_next_metadata_cluster {
     cluster_id_t cluster_id; // metadata log continues there
 } __attribute__((packed));
 
+struct ondisk_create_inode {
+    inode_t inode;
+    uint8_t is_directory;
+    ondisk_unix_metadata metadata;
+} __attribute__((packed));
+
 template<typename T>
 constexpr size_t ondisk_entry_size(const T& entry) noexcept {
-    static_assert(std::is_same_v<T, ondisk_next_metadata_cluster>, "ondisk entry size not defined for given type");
+    static_assert(std::is_same_v<T, ondisk_next_metadata_cluster> or
+            std::is_same_v<T, ondisk_create_inode>, "ondisk entry size not defined for given type");
     return sizeof(ondisk_type) + sizeof(entry);
 }
 
