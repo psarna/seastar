@@ -215,6 +215,8 @@ future<> metadata_log_bootstrap::bootstrap_checkpointed_data() {
                 return bootstrap_create_inode();
             case DELETE_INODE:
                 return bootstrap_delete_inode();
+            case ADD_DIR_ENTRY:
+                return bootstrap_add_dir_entry();
             case CREATE_INODE_AS_DIR_ENTRY:
                 return bootstrap_create_inode_as_dir_entry();
             }
@@ -275,6 +277,38 @@ future<> metadata_log_bootstrap::bootstrap_delete_inode() {
     }
 
     _metadata_log.memory_only_delete_inode(entry.inode);
+    return now();
+}
+
+future<> metadata_log_bootstrap::bootstrap_add_dir_entry() {
+    ondisk_add_dir_entry_header entry;
+    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.dir_inode) or
+            not inode_exists(entry.entry_inode)) {
+        return invalid_entry_exception();
+    }
+
+    std::string dir_entry_name;
+    if (not _curr_checkpoint.read_string(dir_entry_name, entry.entry_name_length)) {
+        return invalid_entry_exception();
+    }
+
+    // Only files may be linked as not to create cycles (directories are created and linked using
+    // CREATE_INODE_AS_DIR_ENTRY)
+    if (not _metadata_log._inodes[entry.entry_inode].is_file()) {
+        return invalid_entry_exception();
+    }
+
+    if (not _metadata_log._inodes[entry.dir_inode].is_directory()) {
+        return invalid_entry_exception();
+    }
+    auto& dir = _metadata_log._inodes[entry.dir_inode].get_directory();
+
+    if (dir.entries.count(dir_entry_name) != 0) {
+        return invalid_entry_exception();
+    }
+
+    _metadata_log.memory_only_add_dir_entry(dir, entry.entry_inode, std::move(dir_entry_name));
+    // TODO: Maybe mtime_ns for modifying directory?
     return now();
 }
 
