@@ -322,6 +322,8 @@ public:
     // TODO: what about permissions, uid, gid etc.
     future<inode_t> open_file(std::string path);
 
+    future<> close_file(inode_t inode);
+
     // All disk-related errors will be exposed here
     future<> flush_log() {
         return flush_curr_cluster();
