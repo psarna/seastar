@@ -29,6 +29,7 @@
 #include "fs/metadata_log_operations/create_and_open_unlinked_file.hh"
 #include "fs/metadata_log_operations/create_file.hh"
 #include "fs/metadata_log_operations/link_file.hh"
+#include "fs/metadata_log_operations/truncate.hh"
 #include "fs/metadata_log_operations/unlink_or_remove_file.hh"
 #include "fs/metadata_log_operations/write.hh"
 #include "fs/metadata_to_disk_buffer.hh"
@@ -173,6 +174,27 @@ void metadata_log::memory_only_update_mtime(inode_t inode, decltype(unix_metadat
     // ctime should be updated when contents is modified
     if (it->second.metadata.ctime_ns < mtime_ns) {
         it->second.metadata.ctime_ns = mtime_ns;
+    }
+}
+
+void metadata_log::memory_only_truncate(inode_t inode, file_offset_t size) {
+    auto it = _inodes.find(inode);
+    assert(it != _inodes.end());
+    assert(it->second.is_file());
+    auto& file = it->second.get_file();
+
+    auto file_size = file.size();
+    if (size > file_size) {
+        file.data.emplace(file_size, inode_data_vec {
+            {file_size, size},
+            inode_data_vec::hole_data {}
+        });
+    } else {
+        // TODO: for compaction: update used inode_data_vec
+        cut_out_data_range(file, {
+            size,
+            std::numeric_limits<decltype(file_range::end)>::max()
+        });
     }
 }
 
@@ -442,6 +464,10 @@ future<> metadata_log::close_file(inode_t inode) {
 future<size_t> metadata_log::write(inode_t inode, file_offset_t pos, const void* buffer, size_t len,
         const io_priority_class& pc) {
     return write_operation::perform(*this, inode, pos, buffer, len, pc);
+}
+
+future<> metadata_log::truncate(inode_t inode, file_offset_t size) {
+    return truncate_operation::perform(*this, inode, size);
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,

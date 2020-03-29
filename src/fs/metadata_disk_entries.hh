@@ -78,6 +78,7 @@ enum ondisk_type : uint8_t {
     MEDIUM_WRITE,
     LARGE_WRITE,
     LARGE_WRITE_WITHOUT_MTIME,
+    TRUNCATE,
     ADD_DIR_ENTRY,
     CREATE_INODE_AS_DIR_ENTRY,
     DELETE_DIR_ENTRY,
@@ -144,6 +145,12 @@ struct ondisk_large_write_without_mtime {
     cluster_id_t data_cluster; // length == cluster_size
 } __attribute__((packed));
 
+struct ondisk_truncate {
+    inode_t inode;
+    file_offset_t size;
+    decltype(unix_metadata::mtime_ns) time_ns;
+} __attribute__((packed));
+
 struct ondisk_add_dir_entry_header {
     inode_t dir_inode;
     inode_t entry_inode;
@@ -178,7 +185,8 @@ constexpr size_t ondisk_entry_size(const T& entry) noexcept {
             std::is_same_v<T, ondisk_delete_inode> or
             std::is_same_v<T, ondisk_medium_write> or
             std::is_same_v<T, ondisk_large_write> or
-            std::is_same_v<T, ondisk_large_write_without_mtime>, "ondisk entry size not defined for given type");
+            std::is_same_v<T, ondisk_large_write_without_mtime> or
+            std::is_same_v<T, ondisk_truncate>, "ondisk entry size not defined for given type");
     return sizeof(ondisk_type) + sizeof(entry);
 }
 constexpr size_t ondisk_entry_size(const ondisk_small_write_header& entry) noexcept {
