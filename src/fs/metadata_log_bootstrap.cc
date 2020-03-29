@@ -111,7 +111,12 @@ future<> metadata_log_bootstrap::bootstrap(cluster_id_t first_metadata_cluster_i
         if (free_clusters.empty()) {
             return make_exception_future(no_more_space_exception());
         }
+        cluster_id_t datalog_cluster_id = free_clusters.front();
         free_clusters.pop_front();
+
+        _metadata_log._curr_data_writer = _metadata_log._curr_data_writer->virtual_constructor();
+        _metadata_log._curr_data_writer->init(_metadata_log._cluster_size, _metadata_log._alignment,
+                cluster_id_to_offset(datalog_cluster_id, _metadata_log._cluster_size));
 
         mlogger.debug("free clusters: {}", free_clusters.size());
         _metadata_log._cluster_allocator = cluster_allocator(std::move(_taken_clusters), std::move(free_clusters));
@@ -215,6 +220,14 @@ future<> metadata_log_bootstrap::bootstrap_checkpointed_data() {
                 return bootstrap_create_inode();
             case DELETE_INODE:
                 return bootstrap_delete_inode();
+            case SMALL_WRITE:
+                return bootstrap_small_write();
+            case MEDIUM_WRITE:
+                return bootstrap_medium_write();
+            case LARGE_WRITE:
+                return bootstrap_large_write();
+            case LARGE_WRITE_WITHOUT_MTIME:
+                return bootstrap_large_write_without_mtime();
             case ADD_DIR_ENTRY:
                 return bootstrap_add_dir_entry();
             case CREATE_INODE_AS_DIR_ENTRY:
@@ -281,6 +294,96 @@ future<> metadata_log_bootstrap::bootstrap_delete_inode() {
     }
 
     _metadata_log.memory_only_delete_inode(entry.inode);
+    return now();
+}
+
+future<> metadata_log_bootstrap::bootstrap_small_write() {
+    ondisk_small_write_header entry;
+    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
+        return invalid_entry_exception();
+    }
+
+    if (not _metadata_log._inodes[entry.inode].is_file()) {
+        return invalid_entry_exception();
+    }
+
+    auto data_opt = _curr_checkpoint.read_tmp_buff(entry.length);
+    if (not data_opt) {
+        return invalid_entry_exception();
+    }
+    temporary_buffer<uint8_t>& data = *data_opt;
+
+    _metadata_log.memory_only_small_write(entry.inode, entry.offset, std::move(data));
+    _metadata_log.memory_only_update_mtime(entry.inode, entry.time_ns);
+    return now();
+}
+
+future<> metadata_log_bootstrap::bootstrap_medium_write() {
+    ondisk_medium_write entry;
+    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
+        return invalid_entry_exception();
+    }
+
+    if (not _metadata_log._inodes[entry.inode].is_file()) {
+        return invalid_entry_exception();
+    }
+
+    cluster_id_t data_cluster_id = offset_to_cluster_id(entry.disk_offset, _metadata_log._cluster_size);
+    if (_available_clusters.beg > data_cluster_id or
+            _available_clusters.end <= data_cluster_id) {
+        return invalid_entry_exception();
+    }
+    // TODO: we could check overlapping with other writes
+    _taken_clusters.emplace(data_cluster_id);
+
+    _metadata_log.memory_only_disk_write(entry.inode, entry.offset, entry.disk_offset, entry.length);
+    _metadata_log.memory_only_update_mtime(entry.inode, entry.time_ns);
+    return now();
+}
+
+future<> metadata_log_bootstrap::bootstrap_large_write() {
+    ondisk_large_write entry;
+    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
+        return invalid_entry_exception();
+    }
+
+    if (not _metadata_log._inodes[entry.inode].is_file()) {
+        return invalid_entry_exception();
+    }
+
+    if (_available_clusters.beg > entry.data_cluster or
+            _available_clusters.end <= entry.data_cluster or
+            _taken_clusters.count(entry.data_cluster) != 0) {
+        return invalid_entry_exception();
+    }
+    _taken_clusters.emplace((cluster_id_t)entry.data_cluster);
+
+    _metadata_log.memory_only_disk_write(entry.inode, entry.offset,
+            cluster_id_to_offset(entry.data_cluster, _metadata_log._cluster_size), _metadata_log._cluster_size);
+    _metadata_log.memory_only_update_mtime(entry.inode, entry.time_ns);
+    return now();
+}
+
+// TODO: copy pasting :(
+future<> metadata_log_bootstrap::bootstrap_large_write_without_mtime() {
+    ondisk_large_write_without_mtime entry;
+    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
+        return invalid_entry_exception();
+    }
+
+    if (not _metadata_log._inodes[entry.inode].is_file()) {
+        return invalid_entry_exception();
+    }
+
+    if (_available_clusters.beg > entry.data_cluster or
+            _available_clusters.end <= entry.data_cluster or
+            _taken_clusters.count(entry.data_cluster) != 0) {
+        return invalid_entry_exception();
+    }
+    _taken_clusters.emplace((cluster_id_t)entry.data_cluster);
+
+    _metadata_log.memory_only_disk_write(entry.inode, entry.offset,
+            cluster_id_to_offset(entry.data_cluster, _metadata_log._cluster_size), _metadata_log._cluster_size);
     return now();
 }
 

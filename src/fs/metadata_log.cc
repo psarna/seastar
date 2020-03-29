@@ -30,6 +30,7 @@
 #include "fs/metadata_log_operations/create_file.hh"
 #include "fs/metadata_log_operations/link_file.hh"
 #include "fs/metadata_log_operations/unlink_or_remove_file.hh"
+#include "fs/metadata_log_operations/write.hh"
 #include "fs/metadata_to_disk_buffer.hh"
 #include "fs/path.hh"
 #include "fs/units.hh"
@@ -57,11 +58,12 @@
 namespace seastar::fs {
 
 metadata_log::metadata_log(block_device device, uint32_t cluster_size, uint32_t alignment,
-    shared_ptr<metadata_to_disk_buffer> cluster_buff)
+    shared_ptr<metadata_to_disk_buffer> cluster_buff, shared_ptr<cluster_writer> data_writer)
 : _device(std::move(device))
 , _cluster_size(cluster_size)
 , _alignment(alignment)
 , _curr_cluster_buff(std::move(cluster_buff))
+, _curr_data_writer(std::move(data_writer))
 , _cluster_allocator({}, {})
 , _inode_allocator(1, 0) {
     assert(is_power_of_2(alignment));
@@ -70,7 +72,7 @@ metadata_log::metadata_log(block_device device, uint32_t cluster_size, uint32_t 
 
 metadata_log::metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment)
 : metadata_log(std::move(device), cluster_size, alignment,
-        make_shared<metadata_to_disk_buffer>()) {}
+        make_shared<metadata_to_disk_buffer>(), make_shared<cluster_writer>()) {}
 
 future<> metadata_log::bootstrap(inode_t root_dir, cluster_id_t first_metadata_cluster_id, cluster_range available_clusters,
         fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id) {
@@ -81,6 +83,27 @@ future<> metadata_log::bootstrap(inode_t root_dir, cluster_id_t first_metadata_c
 future<> metadata_log::shutdown() {
     return flush_log().then([this] {
         return _device.close();
+    });
+}
+
+void metadata_log::write_update(inode_info::file& file, inode_data_vec new_data_vec) {
+    // TODO: for compaction: update used inode_data_vec
+    auto file_size = file.size();
+    if (file_size < new_data_vec.data_range.beg) {
+        file.data.emplace(file_size, inode_data_vec {
+            {file_size, new_data_vec.data_range.beg},
+            inode_data_vec::hole_data {}
+        });
+    } else {
+        cut_out_data_range(file, new_data_vec.data_range);
+    }
+
+    file.data.emplace(new_data_vec.data_range.beg, std::move(new_data_vec));
+}
+
+void metadata_log::cut_out_data_range(inode_info::file& file, file_range range) {
+    file.cut_out_data_range(range, [](inode_data_vec data_vec) {
+        (void)data_vec; // TODO: for compaction: update used inode_data_vec
     });
 }
 
@@ -116,6 +139,41 @@ void metadata_log::memory_only_delete_inode(inode_t inode) {
     }, it->second.contents);
 
     _inodes.erase(it);
+}
+
+void metadata_log::memory_only_small_write(inode_t inode, file_offset_t file_offset, temporary_buffer<uint8_t> data) {
+    inode_data_vec data_vec = {
+        {file_offset, file_offset + data.size()},
+        inode_data_vec::in_mem_data {std::move(data)}
+    };
+
+    auto it = _inodes.find(inode);
+    assert(it != _inodes.end());
+    assert(it->second.is_file());
+    write_update(it->second.get_file(), std::move(data_vec));
+}
+
+void metadata_log::memory_only_disk_write(inode_t inode, file_offset_t file_offset, disk_offset_t disk_offset,
+        size_t write_len) {
+    inode_data_vec data_vec = {
+        {file_offset, file_offset + write_len},
+        inode_data_vec::on_disk_data {disk_offset}
+    };
+
+    auto it = _inodes.find(inode);
+    assert(it != _inodes.end());
+    assert(it->second.is_file());
+    write_update(it->second.get_file(), std::move(data_vec));
+}
+
+void metadata_log::memory_only_update_mtime(inode_t inode, decltype(unix_metadata::mtime_ns) mtime_ns) {
+    auto it = _inodes.find(inode);
+    assert(it != _inodes.end());
+    it->second.metadata.mtime_ns = mtime_ns;
+    // ctime should be updated when contents is modified
+    if (it->second.metadata.ctime_ns < mtime_ns) {
+        it->second.metadata.ctime_ns = mtime_ns;
+    }
 }
 
 void metadata_log::memory_only_add_dir_entry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name) {
@@ -379,6 +437,11 @@ future<> metadata_log::close_file(inode_t inode) {
         }
         return now();
     });
+}
+
+future<size_t> metadata_log::write(inode_t inode, file_offset_t pos, const void* buffer, size_t len,
+        const io_priority_class& pc) {
+    return write_operation::perform(*this, inode, pos, buffer, len, pc);
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,

@@ -161,6 +161,30 @@ public:
         return append_simple(DELETE_INODE, delete_inode);
     }
 
+    [[nodiscard]] virtual append_result append(const ondisk_small_write_header& small_write, const void* data) noexcept {
+        ondisk_type type = SMALL_WRITE;
+        if (not fits_for_append(ondisk_entry_size(small_write))) {
+            return TOO_BIG;
+        }
+
+        append_bytes(&type, sizeof(type));
+        append_bytes(&small_write, sizeof(small_write));
+        append_bytes(data, small_write.length);
+        return APPENDED;
+    }
+
+    [[nodiscard]] virtual append_result append(const ondisk_medium_write& medium_write) noexcept {
+        return append_simple(MEDIUM_WRITE, medium_write);
+    }
+
+    [[nodiscard]] virtual append_result append(const ondisk_large_write& large_write) noexcept {
+        return append_simple(LARGE_WRITE, large_write);
+    }
+
+    [[nodiscard]] virtual append_result append(const ondisk_large_write_without_mtime& large_write_without_mtime) noexcept {
+        return append_simple(LARGE_WRITE_WITHOUT_MTIME, large_write_without_mtime);
+    }
+
     [[nodiscard]] virtual append_result append(const ondisk_add_dir_entry_header& add_dir_entry, const void* entry_name) noexcept {
         ondisk_type type = ADD_DIR_ENTRY;
         if (not fits_for_append(ondisk_entry_size(add_dir_entry))) {

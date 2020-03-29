@@ -676,6 +676,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/cluster.hh
     src/fs/cluster_allocator.cc
     src/fs/cluster_allocator.hh
+    src/fs/cluster_writer.hh
     src/fs/crc.hh
     src/fs/file.cc
     src/fs/inode.hh
@@ -689,6 +690,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/metadata_log_operations/create_file.hh
     src/fs/metadata_log_operations/link_file.hh
     src/fs/metadata_log_operations/unlink_or_remove_file.hh
+    src/fs/metadata_log_operations/write.hh
     src/fs/metadata_to_disk_buffer.hh
     src/fs/path.hh
     src/fs/range.hh
