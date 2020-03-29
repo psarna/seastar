@@ -29,6 +29,7 @@
 #include "fs/metadata_log_operations/create_and_open_unlinked_file.hh"
 #include "fs/metadata_log_operations/create_file.hh"
 #include "fs/metadata_log_operations/link_file.hh"
+#include "fs/metadata_log_operations/read.hh"
 #include "fs/metadata_log_operations/truncate.hh"
 #include "fs/metadata_log_operations/unlink_or_remove_file.hh"
 #include "fs/metadata_log_operations/write.hh"
@@ -459,6 +460,11 @@ future<> metadata_log::close_file(inode_t inode) {
         }
         return now();
     });
+}
+
+future<size_t> metadata_log::read(inode_t inode, file_offset_t pos, void* buffer, size_t len,
+        const io_priority_class& pc) {
+    return read_operation::perform(*this, inode, pos, buffer, len, pc);
 }
 
 future<size_t> metadata_log::write(inode_t inode, file_offset_t pos, const void* buffer, size_t len,
