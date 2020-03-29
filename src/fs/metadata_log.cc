@@ -1,0 +1,222 @@
+/*
+ * This file is open source software, licensed to you under the terms
+ * of the Apache License, Version 2.0 (the "License").  See the NOTICE file
+ * distributed with this work for additional information regarding copyright
+ * ownership.  You may not use this file except in compliance with the License.
+ *
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+/*
+ * Copyright (C) 2020 ScyllaDB
+ */
+
+#include "fs/cluster.hh"
+#include "fs/cluster_allocator.hh"
+#include "fs/inode.hh"
+#include "fs/inode_info.hh"
+#include "fs/metadata_disk_entries.hh"
+#include "fs/metadata_log.hh"
+#include "fs/metadata_log_bootstrap.hh"
+#include "fs/metadata_to_disk_buffer.hh"
+#include "fs/path.hh"
+#include "fs/units.hh"
+#include "fs/unix_metadata.hh"
+#include "seastar/core/aligned_buffer.hh"
+#include "seastar/core/do_with.hh"
+#include "seastar/core/file-types.hh"
+#include "seastar/core/future-util.hh"
+#include "seastar/core/future.hh"
+#include "seastar/core/shared_mutex.hh"
+#include "seastar/fs/overloaded.hh"
+
+#include <boost/crc.hpp>
+#include <boost/range/irange.hpp>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <stdexcept>
+#include <string_view>
+#include <unordered_set>
+#include <variant>
+
+namespace seastar::fs {
+
+metadata_log::metadata_log(block_device device, uint32_t cluster_size, uint32_t alignment,
+    shared_ptr<metadata_to_disk_buffer> cluster_buff)
+: _device(std::move(device))
+, _cluster_size(cluster_size)
+, _alignment(alignment)
+, _curr_cluster_buff(std::move(cluster_buff))
+, _cluster_allocator({}, {})
+, _inode_allocator(1, 0) {
+    assert(is_power_of_2(alignment));
+    assert(cluster_size > 0 and cluster_size % alignment == 0);
+}
+
+metadata_log::metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment)
+: metadata_log(std::move(device), cluster_size, alignment,
+        make_shared<metadata_to_disk_buffer>()) {}
+
+future<> metadata_log::bootstrap(inode_t root_dir, cluster_id_t first_metadata_cluster_id, cluster_range available_clusters,
+        fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id) {
+    return metadata_log_bootstrap::bootstrap(*this, root_dir, first_metadata_cluster_id, available_clusters,
+            fs_shards_pool_size, fs_shard_id);
+}
+
+future<> metadata_log::shutdown() {
+    return flush_log().then([this] {
+        return _device.close();
+    });
+}
+
+void metadata_log::schedule_flush_of_curr_cluster() {
+    // Make writes concurrent (TODO: maybe serialized within *one* cluster would be faster?)
+    schedule_background_task(do_with(_curr_cluster_buff, &_device, [](auto& crr_clstr_bf, auto& device) {
+        return crr_clstr_bf->flush_to_disk(*device);
+    }));
+}
+
+future<> metadata_log::flush_curr_cluster() {
+    if (_curr_cluster_buff->bytes_left_after_flush_if_done_now() == 0) {
+        switch (schedule_flush_of_curr_cluster_and_change_it_to_new_one()) {
+        case flush_result::NO_SPACE:
+            return make_exception_future(no_more_space_exception());
+        case flush_result::DONE:
+            break;
+        }
+    } else {
+        schedule_flush_of_curr_cluster();
+    }
+
+    return _background_futures.get_future();
+}
+
+metadata_log::flush_result metadata_log::schedule_flush_of_curr_cluster_and_change_it_to_new_one() {
+    auto next_cluster = _cluster_allocator.alloc();
+    if (not next_cluster) {
+        // Here metadata log dies, we cannot even flush current cluster because from there we won't be able to recover
+        // TODO: ^ add protection from it and take it into account during compaction
+        return flush_result::NO_SPACE;
+    }
+
+    auto append_res = _curr_cluster_buff->append(ondisk_next_metadata_cluster {*next_cluster});
+    assert(append_res == metadata_to_disk_buffer::APPENDED);
+    schedule_flush_of_curr_cluster();
+
+    // Make next cluster the current cluster to allow writing next metadata entries before flushing finishes
+    _curr_cluster_buff = _curr_cluster_buff->virtual_constructor();
+    _curr_cluster_buff->init(_cluster_size, _alignment,
+            cluster_id_to_offset(*next_cluster, _cluster_size));
+    return flush_result::DONE;
+}
+
+std::variant<inode_t, metadata_log::path_lookup_error> metadata_log::do_path_lookup(const std::string& path) const noexcept {
+    if (path.empty() or path[0] != '/') {
+        return path_lookup_error::NOT_ABSOLUTE;
+    }
+
+    std::vector<inode_t> components_stack = {_root_dir};
+    size_t beg = 0;
+    while (beg < path.size()) {
+        range component_range = {beg, path.find('/', beg)};
+        bool check_if_dir = false;
+        if (component_range.end == path.npos) {
+            component_range.end = path.size();
+            beg = path.size();
+        } else {
+            check_if_dir = true;
+            beg = component_range.end + 1; // Jump over '/'
+        }
+
+        std::string_view component(path.data() + component_range.beg, component_range.size());
+        // Process the component
+        if (component == "") {
+            continue;
+        } else if (component == ".") {
+            assert(component_range.beg > 0 and path[component_range.beg - 1] == '/' and "Since path is absolute we do not have to check if the current component is a directory");
+            continue;
+        } else if (component == "..") {
+            if (components_stack.size() > 1) { // Root dir cannot be popped
+                components_stack.pop_back();
+            }
+        } else {
+            auto dir_it = _inodes.find(components_stack.back());
+            assert(dir_it != _inodes.end() and "inode comes from some previous lookup (or is a root directory) hence dir_it has to be valid");
+            assert(dir_it->second.is_directory() and "every previous component is a directory and it was checked when they were processed");
+            auto& curr_dir = dir_it->second.get_directory();
+
+            auto it = curr_dir.entries.find(component);
+            if (it == curr_dir.entries.end()) {
+                return path_lookup_error::NO_ENTRY;
+            }
+
+            inode_t entry_inode = it->second;
+            if (check_if_dir) {
+                auto entry_it = _inodes.find(entry_inode);
+                assert(entry_it != _inodes.end() and "dir entries have to exist");
+                if (not entry_it->second.is_directory()) {
+                    return path_lookup_error::NOT_DIR;
+                }
+            }
+
+            components_stack.emplace_back(entry_inode);
+        }
+    }
+
+    return components_stack.back();
+}
+
+future<inode_t> metadata_log::path_lookup(const std::string& path) const {
+    auto lookup_res = do_path_lookup(path);
+    return std::visit(overloaded {
+        [](path_lookup_error error) {
+            switch (error) {
+            case path_lookup_error::NOT_ABSOLUTE:
+                return make_exception_future<inode_t>(path_is_not_absolute_exception());
+            case path_lookup_error::NO_ENTRY:
+                return make_exception_future<inode_t>(no_such_file_or_directory_exception());
+            case path_lookup_error::NOT_DIR:
+                return make_exception_future<inode_t>(path_component_not_directory_exception());
+            }
+            __builtin_unreachable();
+        },
+        [](inode_t inode) {
+            return make_ready_future<inode_t>(inode);
+        }
+    }, lookup_res);
+}
+
+file_offset_t metadata_log::file_size(inode_t inode) const {
+    auto it = _inodes.find(inode);
+    if (it == _inodes.end()) {
+        throw invalid_inode_exception();
+    }
+
+    return std::visit(overloaded {
+        [](const inode_info::file& file) {
+            return file.size();
+        },
+        [](const inode_info::directory&) -> file_offset_t {
+            throw invalid_inode_exception();
+        }
+    }, it->second.contents);
+}
+
+// TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,
+// then it should be possible to compact some data (e.g. by truncating a file) via top-level interface and retrying the flush()
+// without a ENOSPACE error. In particular if we delete all files after ENOSPACE it should be successful. It becomes especially
+// hard if we write metadata to the last cluster and there is no enough room to write these delete operations. We have to
+// guarantee that the filesystem is in a recoverable state then.
+
+} // namespace seastar::fs
