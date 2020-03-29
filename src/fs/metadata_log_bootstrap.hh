@@ -127,6 +127,8 @@ class metadata_log_bootstrap {
 
     future<> bootstrap_large_write_without_mtime();
 
+    future<> bootstrap_truncate();
+
     future<> bootstrap_add_dir_entry();
 
     future<> bootstrap_create_inode_as_dir_entry();

@@ -228,6 +228,8 @@ future<> metadata_log_bootstrap::bootstrap_checkpointed_data() {
                 return bootstrap_large_write();
             case LARGE_WRITE_WITHOUT_MTIME:
                 return bootstrap_large_write_without_mtime();
+            case TRUNCATE:
+                return bootstrap_truncate();
             case ADD_DIR_ENTRY:
                 return bootstrap_add_dir_entry();
             case CREATE_INODE_AS_DIR_ENTRY:
@@ -384,6 +386,21 @@ future<> metadata_log_bootstrap::bootstrap_large_write_without_mtime() {
 
     _metadata_log.memory_only_disk_write(entry.inode, entry.offset,
             cluster_id_to_offset(entry.data_cluster, _metadata_log._cluster_size), _metadata_log._cluster_size);
+    return now();
+}
+
+future<> metadata_log_bootstrap::bootstrap_truncate() {
+    ondisk_truncate entry;
+    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
+        return invalid_entry_exception();
+    }
+
+    if (not _metadata_log._inodes[entry.inode].is_file()) {
+        return invalid_entry_exception();
+    }
+
+    _metadata_log.memory_only_truncate(entry.inode, entry.size);
+    _metadata_log.memory_only_update_mtime(entry.inode, entry.time_ns);
     return now();
 }
 
