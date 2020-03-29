@@ -23,6 +23,7 @@
 
 #include "fs/cluster.hh"
 #include "fs/cluster_allocator.hh"
+#include "fs/cluster_writer.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
@@ -54,6 +55,7 @@ class metadata_log {
 
     // Takes care of writing current cluster of serialized metadata log entries to device
     shared_ptr<metadata_to_disk_buffer> _curr_cluster_buff;
+    shared_ptr<cluster_writer> _curr_data_writer;
     shared_future<> _background_futures = now();
 
     // In memory metadata
@@ -160,10 +162,11 @@ class metadata_log {
     friend class create_file_operation;
     friend class link_file_operation;
     friend class unlink_or_remove_file_operation;
+    friend class write_operation;
 
 public:
     metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment,
-            shared_ptr<metadata_to_disk_buffer> cluster_buff);
+            shared_ptr<metadata_to_disk_buffer> cluster_buff, shared_ptr<cluster_writer> data_writer);
 
     metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment);
 
@@ -181,8 +184,16 @@ private:
         return _inodes.count(inode) != 0;
     }
 
+    void write_update(inode_info::file& file, inode_data_vec new_data_vec);
+
+    // Deletes data vectors that are subset of @p data_range and cuts overlapping data vectors to make them not overlap
+    void cut_out_data_range(inode_info::file& file, file_range range);
+
     inode_info& memory_only_create_inode(inode_t inode, bool is_directory, unix_metadata metadata);
     void memory_only_delete_inode(inode_t inode);
+    void memory_only_small_write(inode_t inode, disk_offset_t offset, temporary_buffer<uint8_t> data);
+    void memory_only_disk_write(inode_t inode, file_offset_t file_offset, disk_offset_t disk_offset, size_t write_len);
+    void memory_only_update_mtime(inode_t inode, decltype(unix_metadata::mtime_ns) mtime_ns);
     void memory_only_add_dir_entry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name);
     void memory_only_delete_dir_entry(inode_info::directory& dir, std::string entry_name);
 
@@ -323,6 +334,9 @@ public:
     future<inode_t> open_file(std::string path);
 
     future<> close_file(inode_t inode);
+
+    future<size_t> write(inode_t inode, file_offset_t pos, const void* buffer, size_t len,
+            const io_priority_class& pc = default_priority_class());
 
     // All disk-related errors will be exposed here
     future<> flush_log() {
