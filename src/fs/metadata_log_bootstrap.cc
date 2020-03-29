@@ -213,6 +213,8 @@ future<> metadata_log_bootstrap::bootstrap_checkpointed_data() {
                 return bootstrap_next_metadata_cluster();
             case CREATE_INODE:
                 return bootstrap_create_inode();
+            case DELETE_INODE:
+                return bootstrap_delete_inode();
             case CREATE_INODE_AS_DIR_ENTRY:
                 return bootstrap_create_inode_as_dir_entry();
             }
@@ -254,6 +256,25 @@ future<> metadata_log_bootstrap::bootstrap_create_inode() {
 
     _metadata_log.memory_only_create_inode(entry.inode, entry.is_directory,
             ondisk_metadata_to_metadata(entry.metadata));
+    return now();
+}
+
+future<> metadata_log_bootstrap::bootstrap_delete_inode() {
+    ondisk_delete_inode entry;
+    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
+        return invalid_entry_exception();
+    }
+
+    inode_info& inode_info = _metadata_log._inodes.at(entry.inode);
+    if (inode_info.directories_containing_file > 0) {
+        return invalid_entry_exception(); // Only unlinked inodes may be deleted
+    }
+
+    if (inode_info.is_directory() and not inode_info.get_directory().entries.empty()) {
+        return invalid_entry_exception(); // Only empty directories may be deleted
+    }
+
+    _metadata_log.memory_only_delete_inode(entry.inode);
     return now();
 }
 

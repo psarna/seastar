@@ -117,6 +117,8 @@ class metadata_log_bootstrap {
 
     future<> bootstrap_create_inode();
 
+    future<> bootstrap_delete_inode();
+
     future<> bootstrap_create_inode_as_dir_entry();
 
 public:

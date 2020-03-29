@@ -73,6 +73,7 @@ enum ondisk_type : uint8_t {
     CHECKPOINT,
     NEXT_METADATA_CLUSTER,
     CREATE_INODE,
+    DELETE_INODE,
     CREATE_INODE_AS_DIR_ENTRY,
 };
 
@@ -103,6 +104,10 @@ struct ondisk_create_inode {
     ondisk_unix_metadata metadata;
 } __attribute__((packed));
 
+struct ondisk_delete_inode {
+    inode_t inode;
+} __attribute__((packed));
+
 struct ondisk_create_inode_as_dir_entry_header {
     ondisk_create_inode entry_inode;
     inode_t dir_inode;
@@ -113,7 +118,8 @@ struct ondisk_create_inode_as_dir_entry_header {
 template<typename T>
 constexpr size_t ondisk_entry_size(const T& entry) noexcept {
     static_assert(std::is_same_v<T, ondisk_next_metadata_cluster> or
-            std::is_same_v<T, ondisk_create_inode>, "ondisk entry size not defined for given type");
+            std::is_same_v<T, ondisk_create_inode> or
+            std::is_same_v<T, ondisk_delete_inode>, "ondisk entry size not defined for given type");
     return sizeof(ondisk_type) + sizeof(entry);
 }
 constexpr size_t ondisk_entry_size(const ondisk_create_inode_as_dir_entry_header& entry) noexcept {
