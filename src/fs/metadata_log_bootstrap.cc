@@ -219,6 +219,10 @@ future<> metadata_log_bootstrap::bootstrap_checkpointed_data() {
                 return bootstrap_add_dir_entry();
             case CREATE_INODE_AS_DIR_ENTRY:
                 return bootstrap_create_inode_as_dir_entry();
+            case DELETE_DIR_ENTRY:
+                return bootstrap_delete_dir_entry();
+            case DELETE_INODE_AND_DIR_ENTRY:
+                return bootstrap_delete_inode_and_dir_entry();
             }
 
             // unknown type => metadata log corruption
@@ -337,6 +341,72 @@ future<> metadata_log_bootstrap::bootstrap_create_inode_as_dir_entry() {
             ondisk_metadata_to_metadata(entry.entry_inode.metadata));
     _metadata_log.memory_only_add_dir_entry(dir, entry.entry_inode.inode, std::move(dir_entry_name));
     // TODO: Maybe mtime_ns for modifying directory?
+    return now();
+}
+
+future<> metadata_log_bootstrap::bootstrap_delete_dir_entry() {
+    ondisk_delete_dir_entry_header entry;
+    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.dir_inode)) {
+        return invalid_entry_exception();
+    }
+
+    std::string dir_entry_name;
+    if (not _curr_checkpoint.read_string(dir_entry_name, entry.entry_name_length)) {
+        return invalid_entry_exception();
+    }
+
+    if (not _metadata_log._inodes[entry.dir_inode].is_directory()) {
+        return invalid_entry_exception();
+    }
+    auto& dir = _metadata_log._inodes[entry.dir_inode].get_directory();
+
+    auto it = dir.entries.find(dir_entry_name);
+    if (it == dir.entries.end()) {
+        return invalid_entry_exception();
+    }
+
+    _metadata_log.memory_only_delete_dir_entry(dir, std::move(dir_entry_name));
+    // TODO: Maybe mtime_ns for modifying directory?
+    return now();
+}
+
+future<> metadata_log_bootstrap::bootstrap_delete_inode_and_dir_entry() {
+    ondisk_delete_inode_and_dir_entry_header entry;
+    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.dir_inode) or not inode_exists(entry.inode_to_delete)) {
+        return invalid_entry_exception();
+    }
+
+    std::string dir_entry_name;
+    if (not _curr_checkpoint.read_string(dir_entry_name, entry.entry_name_length)) {
+        return invalid_entry_exception();
+    }
+
+    if (not _metadata_log._inodes[entry.dir_inode].is_directory()) {
+        return invalid_entry_exception();
+    }
+    auto& dir = _metadata_log._inodes[entry.dir_inode].get_directory();
+
+    auto it = dir.entries.find(dir_entry_name);
+    if (it == dir.entries.end()) {
+        return invalid_entry_exception();
+    }
+
+    _metadata_log.memory_only_delete_dir_entry(dir, std::move(dir_entry_name));
+    // TODO: Maybe mtime_ns for modifying directory?
+
+    // TODO: there is so much copy & paste here...
+    // TODO: maybe to make ondisk_delete_inode_and_dir_entry_header have ondisk_delete_inode and
+    //       ondisk_delete_dir_entry_header to ease deduplicating code?
+    inode_info& inode_to_delete_info = _metadata_log._inodes.at(entry.inode_to_delete);
+    if (inode_to_delete_info.directories_containing_file > 0) {
+        return invalid_entry_exception(); // Only unlinked inodes may be deleted
+    }
+
+    if (inode_to_delete_info.is_directory() and not inode_to_delete_info.get_directory().entries.empty()) {
+        return invalid_entry_exception(); // Only empty directories may be deleted
+    }
+
+    _metadata_log.memory_only_delete_inode(entry.inode_to_delete);
     return now();
 }
 
