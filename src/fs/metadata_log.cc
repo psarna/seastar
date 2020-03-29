@@ -98,6 +98,24 @@ inode_info& metadata_log::memory_only_create_inode(inode_t inode, bool is_direct
     }).first->second;
 }
 
+void metadata_log::memory_only_delete_inode(inode_t inode) {
+    auto it = _inodes.find(inode);
+    assert(it != _inodes.end());
+    assert(not it->second.is_open());
+    assert(not it->second.is_linked());
+
+    std::visit(overloaded {
+        [](const inode_info::directory& dir) {
+            assert(dir.entries.empty());
+        },
+        [](const inode_info::file&) {
+            // TODO: for compaction: update used inode_data_vec
+        }
+    }, it->second.contents);
+
+    _inodes.erase(it);
+}
+
 void metadata_log::memory_only_add_dir_entry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name) {
     auto it = _inodes.find(entry_inode);
     assert(it != _inodes.end());
@@ -148,6 +166,26 @@ metadata_log::flush_result metadata_log::schedule_flush_of_curr_cluster_and_chan
     _curr_cluster_buff->init(_cluster_size, _alignment,
             cluster_id_to_offset(*next_cluster, _cluster_size));
     return flush_result::DONE;
+}
+
+void metadata_log::schedule_attempt_to_delete_inode(inode_t inode) {
+    return schedule_background_task([this, inode] {
+        auto it = _inodes.find(inode);
+        if (it == _inodes.end() or it->second.is_linked() or it->second.is_open()) {
+            return now(); // Scheduled delete became invalid
+        }
+
+        switch (append_ondisk_entry(ondisk_delete_inode {inode})) {
+        case append_result::TOO_BIG:
+            assert(false and "ondisk entry cannot be too big");
+        case append_result::NO_SPACE:
+            return make_exception_future(no_more_space_exception());
+        case append_result::APPENDED:
+            memory_only_delete_inode(inode);
+            return now();
+        }
+        __builtin_unreachable();
+    });
 }
 
 std::variant<inode_t, metadata_log::path_lookup_error> metadata_log::do_path_lookup(const std::string& path) const noexcept {
