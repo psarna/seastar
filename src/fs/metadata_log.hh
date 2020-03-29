@@ -158,6 +158,7 @@ class metadata_log {
 
     friend class create_and_open_unlinked_file_operation;
     friend class create_file_operation;
+    friend class link_file_operation;
 
 public:
     metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment,
@@ -302,6 +303,12 @@ public:
     future<inode_t> create_and_open_unlinked_file(file_permissions perms);
 
     future<> create_directory(std::string path, file_permissions perms);
+
+    // Creates name (@p path) for a file (@p inode)
+    future<> link_file(inode_t inode, std::string path);
+
+    // Creates name (@p destination) for a file (not directory) @p source
+    future<> link_file(std::string source, std::string destination);
 
     // All disk-related errors will be exposed here
     future<> flush_log() {
