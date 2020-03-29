@@ -213,6 +213,8 @@ future<> metadata_log_bootstrap::bootstrap_checkpointed_data() {
                 return bootstrap_next_metadata_cluster();
             case CREATE_INODE:
                 return bootstrap_create_inode();
+            case CREATE_INODE_AS_DIR_ENTRY:
+                return bootstrap_create_inode_as_dir_entry();
             }
 
             // unknown type => metadata log corruption
@@ -252,6 +254,34 @@ future<> metadata_log_bootstrap::bootstrap_create_inode() {
 
     _metadata_log.memory_only_create_inode(entry.inode, entry.is_directory,
             ondisk_metadata_to_metadata(entry.metadata));
+    return now();
+}
+
+future<> metadata_log_bootstrap::bootstrap_create_inode_as_dir_entry() {
+    ondisk_create_inode_as_dir_entry_header entry;
+    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.dir_inode) or
+            inode_exists(entry.entry_inode.inode)) {
+        return invalid_entry_exception();
+    }
+
+    std::string dir_entry_name;
+    if (not _curr_checkpoint.read_string(dir_entry_name, entry.entry_name_length)) {
+        return invalid_entry_exception();
+    }
+
+    if (not _metadata_log._inodes[entry.dir_inode].is_directory()) {
+        return invalid_entry_exception();
+    }
+    auto& dir = _metadata_log._inodes[entry.dir_inode].get_directory();
+
+    if (dir.entries.count(dir_entry_name) != 0) {
+        return invalid_entry_exception();
+    }
+
+    _metadata_log.memory_only_create_inode(entry.entry_inode.inode, entry.entry_inode.is_directory,
+            ondisk_metadata_to_metadata(entry.entry_inode.metadata));
+    _metadata_log.memory_only_add_dir_entry(dir, entry.entry_inode.inode, std::move(dir_entry_name));
+    // TODO: Maybe mtime_ns for modifying directory?
     return now();
 }
 

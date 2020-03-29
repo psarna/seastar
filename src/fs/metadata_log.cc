@@ -27,6 +27,7 @@
 #include "fs/metadata_log.hh"
 #include "fs/metadata_log_bootstrap.hh"
 #include "fs/metadata_log_operations/create_and_open_unlinked_file.hh"
+#include "fs/metadata_log_operations/create_file.hh"
 #include "fs/metadata_to_disk_buffer.hh"
 #include "fs/path.hh"
 #include "fs/units.hh"
@@ -95,6 +96,17 @@ inode_info& metadata_log::memory_only_create_inode(inode_t inode, bool is_direct
             return inode_info::file {};
         }()
     }).first->second;
+}
+
+void metadata_log::memory_only_add_dir_entry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name) {
+    auto it = _inodes.find(entry_inode);
+    assert(it != _inodes.end());
+    // Directory may only be linked once (to avoid creating cycles)
+    assert(not it->second.is_directory() or not it->second.is_linked());
+
+    bool inserted = dir.entries.emplace(std::move(entry_name), entry_inode).second;
+    assert(inserted);
+    ++it->second.directories_containing_file;
 }
 
 void metadata_log::schedule_flush_of_curr_cluster() {
@@ -230,8 +242,20 @@ file_offset_t metadata_log::file_size(inode_t inode) const {
     }, it->second.contents);
 }
 
+future<> metadata_log::create_file(std::string path, file_permissions perms) {
+    return create_file_operation::perform(*this, std::move(path), std::move(perms), create_semantics::CREATE_FILE).discard_result();
+}
+
+future<inode_t> metadata_log::create_and_open_file(std::string path, file_permissions perms) {
+    return create_file_operation::perform(*this, std::move(path), std::move(perms), create_semantics::CREATE_AND_OPEN_FILE);
+}
+
 future<inode_t> metadata_log::create_and_open_unlinked_file(file_permissions perms) {
     return create_and_open_unlinked_file_operation::perform(*this, std::move(perms));
+}
+
+future<> metadata_log::create_directory(std::string path, file_permissions perms) {
+    return create_file_operation::perform(*this, std::move(path), std::move(perms), create_semantics::CREATE_DIR).discard_result();
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,
