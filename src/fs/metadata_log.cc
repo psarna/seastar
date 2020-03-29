@@ -29,6 +29,7 @@
 #include "fs/metadata_log_operations/create_and_open_unlinked_file.hh"
 #include "fs/metadata_log_operations/create_file.hh"
 #include "fs/metadata_log_operations/link_file.hh"
+#include "fs/metadata_log_operations/unlink_or_remove_file.hh"
 #include "fs/metadata_to_disk_buffer.hh"
 #include "fs/path.hh"
 #include "fs/units.hh"
@@ -126,6 +127,18 @@ void metadata_log::memory_only_add_dir_entry(inode_info::directory& dir, inode_t
     bool inserted = dir.entries.emplace(std::move(entry_name), entry_inode).second;
     assert(inserted);
     ++it->second.directories_containing_file;
+}
+
+void metadata_log::memory_only_delete_dir_entry(inode_info::directory& dir, std::string entry_name) {
+    auto it = dir.entries.find(entry_name);
+    assert(it != dir.entries.end());
+
+    auto entry_it = _inodes.find(it->second);
+    assert(entry_it != _inodes.end());
+    assert(entry_it->second.is_linked());
+
+    --entry_it->second.directories_containing_file;
+    dir.entries.erase(it);
 }
 
 void metadata_log::schedule_flush_of_curr_cluster() {
@@ -305,6 +318,18 @@ future<> metadata_log::link_file(std::string source, std::string destination) {
     return path_lookup(std::move(source)).then([this, destination = std::move(destination)](inode_t inode) {
         return link_file(inode, std::move(destination));
     });
+}
+
+future<> metadata_log::unlink_file(std::string path) {
+    return unlink_or_remove_file_operation::perform(*this, std::move(path), remove_semantics::FILE_ONLY);
+}
+
+future<> metadata_log::remove_directory(std::string path) {
+    return unlink_or_remove_file_operation::perform(*this, std::move(path), remove_semantics::FILE_OR_DIR);
+}
+
+future<> metadata_log::remove(std::string path) {
+    return unlink_or_remove_file_operation::perform(*this, std::move(path), remove_semantics::DIR_ONLY);
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,
