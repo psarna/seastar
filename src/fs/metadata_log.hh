@@ -159,6 +159,7 @@ class metadata_log {
     friend class create_and_open_unlinked_file_operation;
     friend class create_file_operation;
     friend class link_file_operation;
+    friend class unlink_or_remove_file_operation;
 
 public:
     metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment,
@@ -183,6 +184,7 @@ private:
     inode_info& memory_only_create_inode(inode_t inode, bool is_directory, unix_metadata metadata);
     void memory_only_delete_inode(inode_t inode);
     void memory_only_add_dir_entry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name);
+    void memory_only_delete_dir_entry(inode_info::directory& dir, std::string entry_name);
 
     template<class Func>
     void schedule_background_task(Func&& task) {
@@ -309,6 +311,13 @@ public:
 
     // Creates name (@p destination) for a file (not directory) @p source
     future<> link_file(std::string source, std::string destination);
+
+    future<> unlink_file(std::string path);
+
+    future<> remove_directory(std::string path);
+
+    // Removes empty directory or unlinks file
+    future<> remove(std::string path);
 
     // All disk-related errors will be exposed here
     future<> flush_log() {
