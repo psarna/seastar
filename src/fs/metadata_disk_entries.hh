@@ -74,6 +74,10 @@ enum ondisk_type : uint8_t {
     NEXT_METADATA_CLUSTER,
     CREATE_INODE,
     DELETE_INODE,
+    SMALL_WRITE,
+    MEDIUM_WRITE,
+    LARGE_WRITE,
+    LARGE_WRITE_WITHOUT_MTIME,
     ADD_DIR_ENTRY,
     CREATE_INODE_AS_DIR_ENTRY,
     DELETE_DIR_ENTRY,
@@ -111,6 +115,35 @@ struct ondisk_delete_inode {
     inode_t inode;
 } __attribute__((packed));
 
+struct ondisk_small_write_header {
+    inode_t inode;
+    file_offset_t offset;
+    uint16_t length;
+    decltype(unix_metadata::mtime_ns) time_ns;
+    // After header comes data
+} __attribute__((packed));
+
+struct ondisk_medium_write {
+    inode_t inode;
+    file_offset_t offset;
+    disk_offset_t disk_offset;
+    uint32_t length;
+    decltype(unix_metadata::mtime_ns) time_ns;
+} __attribute__((packed));
+
+struct ondisk_large_write {
+    inode_t inode;
+    file_offset_t offset;
+    cluster_id_t data_cluster; // length == cluster_size
+    decltype(unix_metadata::mtime_ns) time_ns;
+} __attribute__((packed));
+
+struct ondisk_large_write_without_mtime {
+    inode_t inode;
+    file_offset_t offset;
+    cluster_id_t data_cluster; // length == cluster_size
+} __attribute__((packed));
+
 struct ondisk_add_dir_entry_header {
     inode_t dir_inode;
     inode_t entry_inode;
@@ -142,8 +175,14 @@ template<typename T>
 constexpr size_t ondisk_entry_size(const T& entry) noexcept {
     static_assert(std::is_same_v<T, ondisk_next_metadata_cluster> or
             std::is_same_v<T, ondisk_create_inode> or
-            std::is_same_v<T, ondisk_delete_inode>, "ondisk entry size not defined for given type");
+            std::is_same_v<T, ondisk_delete_inode> or
+            std::is_same_v<T, ondisk_medium_write> or
+            std::is_same_v<T, ondisk_large_write> or
+            std::is_same_v<T, ondisk_large_write_without_mtime>, "ondisk entry size not defined for given type");
     return sizeof(ondisk_type) + sizeof(entry);
+}
+constexpr size_t ondisk_entry_size(const ondisk_small_write_header& entry) noexcept {
+    return sizeof(ondisk_type) + sizeof(entry) + entry.length;
 }
 constexpr size_t ondisk_entry_size(const ondisk_add_dir_entry_header& entry) noexcept {
     return sizeof(ondisk_type) + sizeof(entry) + entry.entry_name_length;
