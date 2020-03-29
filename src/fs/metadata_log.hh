@@ -180,6 +180,7 @@ private:
     }
 
     inode_info& memory_only_create_inode(inode_t inode, bool is_directory, unix_metadata metadata);
+    void memory_only_delete_inode(inode_t inode);
     void memory_only_add_dir_entry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name);
 
     template<class Func>
@@ -231,6 +232,8 @@ private:
 
         __builtin_unreachable();
     }
+
+    void schedule_attempt_to_delete_inode(inode_t inode);
 
     enum class path_lookup_error {
         NOT_ABSOLUTE, // a path is not absolute

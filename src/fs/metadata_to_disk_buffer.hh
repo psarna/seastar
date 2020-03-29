@@ -157,6 +157,10 @@ public:
         return append_simple(CREATE_INODE, create_inode);
     }
 
+    [[nodiscard]] virtual append_result append(const ondisk_delete_inode& delete_inode) noexcept {
+        return append_simple(DELETE_INODE, delete_inode);
+    }
+
     [[nodiscard]] virtual append_result append(const ondisk_create_inode_as_dir_entry_header& create_inode_as_dir_entry,
             const void* entry_name) noexcept {
         ondisk_type type = CREATE_INODE_AS_DIR_ENTRY;
