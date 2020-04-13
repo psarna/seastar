@@ -88,19 +88,40 @@ void random_write_with_simulate(metadata_log& log, inode_t inode, file_offset_t 
     write_with_simulate(log, inode, write_offset, buff, real_file_data);
 }
 
-void check_random_reads(metadata_log& log, inode_t inode, resizable_buff_type& real_file_data, size_t reps) {
+void check_random_reads(metadata_log& log, inode_t inode, resizable_buff_type& real_file_data, size_t reps,
+        bool must_be_aligned = false) {
     size_t file_size = real_file_data.size();
     std::default_random_engine random_engine(testing::local_random_engine());
 
+    auto generate_random_value = [&](file_offset_t min, file_offset_t max) {
+        return std::uniform_int_distribution<file_offset_t>(min, max)(random_engine);
+    };
+
+    auto generate_aligned_value = [&](file_offset_t min, file_offset_t max) {
+        auto aligned_min = round_up_to_multiple_of_power_of_2(min, default_alignment);
+        auto aligned_max = round_down_to_multiple_of_power_of_2(max, default_alignment);
+        assert(aligned_min != aligned_max);
+        return std::uniform_int_distribution<file_offset_t>(
+            aligned_min / default_alignment,
+            aligned_max / default_alignment
+            )(random_engine) * default_alignment;
+    };
+
+    std::function<file_offset_t(file_offset_t, file_offset_t)> generate_value;
+    if (must_be_aligned) {
+        generate_value = generate_aligned_value;
+    } else {
+        generate_value = generate_random_value;
+    }
+
     {
         // Check random reads inside the file
-        std::uniform_int_distribution<file_offset_t> distr(0, file_size - 1);
         for (size_t rep = 0; rep < reps; ++rep) {
-            auto a = distr(random_engine);
-            auto b = distr(random_engine);
+            auto a = generate_value(0, file_size);
+            auto b = generate_value(0, file_size);
             if (a > b)
                 std::swap(a, b);
-            size_t max_read_size = b - a + 1;
+            size_t max_read_size = b - a;
             temporary_buffer<uint8_t> read_data(max_read_size);
             BOOST_REQUIRE_EQUAL(log.read(inode, a, read_data.get_write(), max_read_size).get0(), max_read_size);
             BOOST_REQUIRE(std::memcmp(real_file_data.c_str() + a, read_data.get(), max_read_size) == 0);
@@ -109,13 +130,12 @@ void check_random_reads(metadata_log& log, inode_t inode, resizable_buff_type& r
 
     {
         // Check random reads outside the file
-        std::uniform_int_distribution<file_offset_t> distr(file_size, 2 * file_size);
         for (size_t rep = 0; rep < reps; ++rep) {
-            auto a = distr(random_engine);
-            auto b = distr(random_engine);
+            auto a = generate_value(file_size, 2 * file_size);
+            auto b = generate_value(file_size, 2 * file_size);
             if (a > b)
                 std::swap(a, b);
-            size_t max_read_size = b - a + 1;
+            size_t max_read_size = b - a;
             temporary_buffer<uint8_t> read_data(max_read_size);
             BOOST_REQUIRE_EQUAL(log.read(inode, a, read_data.get_write(), max_read_size).get0(), 0);
         }
@@ -123,12 +143,10 @@ void check_random_reads(metadata_log& log, inode_t inode, resizable_buff_type& r
 
     {
         // Check random reads on the edge of the file
-        std::uniform_int_distribution<file_offset_t> distra(0, file_size - 1);
-        std::uniform_int_distribution<file_offset_t> distrb(file_size, 2 * file_size);
         for (size_t rep = 0; rep < reps; ++rep) {
-            auto a = distra(random_engine);
-            auto b = distrb(random_engine);
-            size_t max_read_size = b - a + 1;
+            auto a = generate_value(0, file_size);
+            auto b = generate_value(file_size, 2 * file_size);
+            size_t max_read_size = b - a;
             size_t expected_read_size = file_size - a;
             temporary_buffer<uint8_t> read_data(max_read_size);
             BOOST_REQUIRE_EQUAL(log.read(inode, a, read_data.get_write(), max_read_size).get0(), expected_read_size);
@@ -778,5 +796,40 @@ SEASTAR_THREAD_TEST_CASE(random_writes_and_reads_test) {
 
         CHECK_CALL(random_write_with_simulate(log, inode, a, write_size, aligned, real_file_data));
         CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb_every_write));
+    }
+}
+
+SEASTAR_THREAD_TEST_CASE(aligned_writes_and_reads_test) {
+    BOOST_TEST_MESSAGE("\nTest name: " << get_name());
+    constexpr size_t writes_nb = 300;
+    constexpr size_t random_read_checks_nb_every_write = 30;
+    constexpr unit_size_t cluster_size = 128 * KB;
+    constexpr uint64_t max_file_size = cluster_size * 3;
+    static_assert(max_file_size % default_alignment == 0);
+    constexpr size_t available_cluster_nb = (max_file_size * writes_nb * 2) / cluster_size;
+    BOOST_TEST_MESSAGE("available_cluster_nb: " << available_cluster_nb
+            << ", cluster_size: " << cluster_size
+            << ", writes_nb: " << writes_nb
+            << ", random_read_checks_nb_every_write: " << random_read_checks_nb_every_write);
+
+    auto [blockdev, log] = init_metadata_log(cluster_size, default_alignment, 1, {1, available_cluster_nb + 1});
+    inode_t inode = create_and_open_file(log);
+    resizable_buff_type real_file_data;
+
+    std::uniform_int_distribution<file_offset_t> offset_distr(0, max_file_size / default_alignment);
+    std::default_random_engine random_engine(testing::local_random_engine());
+    for (size_t rep = 1; rep <= writes_nb; ++rep) {
+        if (rep % (writes_nb / 10) == 0)
+            BOOST_TEST_MESSAGE("rep: " << rep << "/" << writes_nb);
+        file_offset_t a, b;
+        do {
+            a = offset_distr(random_engine) * default_alignment;
+            b = offset_distr(random_engine) * default_alignment;
+            if (a > b)
+                std::swap(a, b);
+        } while (a == b);
+        size_t write_size = b - a;
+        CHECK_CALL(random_write_with_simulate(log, inode, a, write_size, true, real_file_data));
+        CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb_every_write, true));
     }
 }
