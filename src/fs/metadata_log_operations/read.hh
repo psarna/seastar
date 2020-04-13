@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "fs/bitwise.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
@@ -29,6 +30,7 @@
 #include "fs/units.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
+#include "seastar/core/shared_ptr.hh"
 #include "seastar/core/temporary_buffer.hh"
 
 namespace seastar::fs {
@@ -116,65 +118,140 @@ class read_operation {
                 return make_ready_future<size_t>(expected_read_len);
             },
             [&](inode_data_vec::on_disk_data& disk_data) {
-                // TODO: we can optimize the case when disk_data.device_offset is aligned
-
-                // Copies data from source_buffer corresponding to the intersection of dest_disk_range
-                // and source_buffer.disk_range into buffer. dest_disk_range.beg corresponds to first byte of buffer
-                // Works when dest_disk_range.beg <= source_buffer._disk_range.beg
-                auto copy_left_intersecting_data =
-                        [](uint8_t* buffer, disk_range dest_disk_range, const disk_temp_buffer& source_buffer) -> size_t {
-                    disk_range intersect = intersection(dest_disk_range, source_buffer._disk_range);
-
-                    assert((intersect.is_empty() or dest_disk_range.beg >= source_buffer._disk_range.beg) and
-                            "Beggining of source buffer on disk should be before beggining of destination buffer on disk");
-
-                    if (not intersect.is_empty()) {
-                        // We can copy _data from disk_temp_buffer
-                        disk_offset_t common_data_len = intersect.size();
-                        disk_offset_t source_data_offset = dest_disk_range.beg - source_buffer._disk_range.beg;
-                        // TODO: maybe we should split that memcpy to multiple parts because large reads can lead
-                        // to spikes in latency
-                        std::memcpy(buffer, source_buffer._data.get() + source_data_offset, common_data_len);
-                        return common_data_len;
-                    } else {
-                        return 0;
-                    }
-                };
-
-                disk_range remaining_read_range {
-                    disk_data.device_offset,
-                    disk_data.device_offset + expected_read_len
-                };
-
-                size_t current_read_len = 0;
-                if (not _prev_disk_read._data.empty()) {
-                    current_read_len = copy_left_intersecting_data(buffer, remaining_read_range, _prev_disk_read);
-                    if (current_read_len == expected_read_len) {
-                        return make_ready_future<size_t>(expected_read_len);
-                    }
-                    remaining_read_range.beg += current_read_len;
-                    buffer += current_read_len;
-                }
-
-                disk_temp_buffer new_disk_read;
-                new_disk_read._disk_range = {
-                    round_down_to_multiple_of_power_of_2(remaining_read_range.beg, _metadata_log._alignment),
-                    round_up_to_multiple_of_power_of_2(remaining_read_range.end, _metadata_log._alignment)
-                };
-                new_disk_read._data = temporary_buffer<uint8_t>::aligned(_metadata_log._alignment, new_disk_read._disk_range.size());
-
-                return _metadata_log._device.read(new_disk_read._disk_range.beg, new_disk_read._data.get_write(),
-                        new_disk_read._disk_range.size(), _pc).then(
-                        [this, copy_left_intersecting_data = std::move(copy_left_intersecting_data),
-                        new_disk_read = std::move(new_disk_read),
-                        remaining_read_range, buffer, current_read_len](size_t read_len) mutable {
-                    new_disk_read._disk_range.end = new_disk_read._disk_range.beg + read_len;
-                    current_read_len += copy_left_intersecting_data(buffer, remaining_read_range, new_disk_read);
-                    _prev_disk_read = std::move(new_disk_read);
-                    return current_read_len;
-                });
+                return do_disk_read({
+                        disk_data.device_offset,
+                        disk_data.device_offset + expected_read_len
+                    }, buffer);
             },
         }, data_vec.data_location);
+    }
+
+    future<size_t> do_disk_read(disk_range read_range, uint8_t* buffer_tmp) {
+        size_t oper_read_len = read_range.size();
+        lw_shared_ptr<size_t> current_read_len = make_lw_shared((size_t)0);
+        lw_shared_ptr<disk_range> remaining_read_range = make_lw_shared(read_range);
+        lw_shared_ptr<uint8_t*> buffer = make_lw_shared(buffer_tmp);
+
+        // Copies data from source_buffer corresponding to the intersection of dest_disk_range
+        // and source_buffer.disk_range into buffer.
+        auto copy_intersecting_data =
+                [](uint8_t* buffer, disk_range dest_disk_range, const disk_temp_buffer& source_buffer) -> size_t {
+            disk_range intersect = intersection(dest_disk_range, source_buffer._disk_range);
+
+            if (intersect.is_empty()) {
+                return 0;
+            }
+
+            disk_offset_t common_data_len = intersect.size();
+            if (dest_disk_range.beg >= source_buffer._disk_range.beg) {
+                // Source data starts before dest data
+                disk_offset_t source_data_offset = dest_disk_range.beg - source_buffer._disk_range.beg;
+                // TODO: maybe we should split that memcpy to multiple parts because large reads can lead
+                // to spikes in latency
+                std::memcpy(buffer, source_buffer._data.get() + source_data_offset, common_data_len);
+            } else {
+                // Source data starts after dest data
+                disk_offset_t dest_data_offset = source_buffer._disk_range.beg - dest_disk_range.beg;
+                std::memcpy(buffer + dest_data_offset, source_buffer._data.get(), common_data_len);
+            }
+            return common_data_len;
+        };
+
+        if (not _prev_disk_read._data.empty()) {
+            *current_read_len = copy_intersecting_data(*buffer, *remaining_read_range, _prev_disk_read);
+            if (*current_read_len == oper_read_len) {
+                return make_ready_future<size_t>(oper_read_len);
+            }
+            remaining_read_range->beg += *current_read_len;
+            *buffer += *current_read_len;
+        }
+
+        auto init_aligned_disk_temp_buffer = [&](disk_range range) {
+            disk_temp_buffer disk_read;
+            disk_read._disk_range = {
+                round_down_to_multiple_of_power_of_2(range.beg, _metadata_log._alignment),
+                round_up_to_multiple_of_power_of_2(range.end, _metadata_log._alignment)
+            };
+            disk_read._data = temporary_buffer<uint8_t>::aligned(_metadata_log._alignment, disk_read._disk_range.size());
+            return disk_read;
+        };
+
+        if (mod_by_power_of_2(reinterpret_cast<uintptr_t>(*buffer), _metadata_log._alignment) ==
+                mod_by_power_of_2(remaining_read_range->beg, _metadata_log._alignment)) {
+            _prev_disk_read = init_aligned_disk_temp_buffer({remaining_read_range->beg, remaining_read_range->beg});
+
+            class partial_read_exception : public std::exception {};
+
+            // Read prefix
+            size_t expected_read_len = _prev_disk_read._disk_range.size();
+            return _metadata_log._device.read(_prev_disk_read._disk_range.beg, _prev_disk_read._data.get_write(),
+                    expected_read_len, _pc).then(
+                    [this, buffer, copy_intersecting_data, remaining_read_range, current_read_len, expected_read_len](size_t read_len) {
+                bool partial_read = read_len != expected_read_len;
+
+                _prev_disk_read._disk_range.end = _prev_disk_read._disk_range.beg + read_len;
+
+                auto copied_data = copy_intersecting_data(*buffer, *remaining_read_range, _prev_disk_read);
+                remaining_read_range->beg += copied_data;
+                *current_read_len += copied_data;
+                *buffer += copied_data;
+
+                if (partial_read) {
+                    // Don't read more in case of partial read
+                    return make_exception_future<>(partial_read_exception());
+                }
+
+                return now();
+            }).then([this, remaining_read_range, current_read_len, buffer] {
+                // Read middle part (directly into the output buffer)
+                if (remaining_read_range->is_empty()) {
+                    return now();
+                } else {
+                    size_t expected_read_len = round_down_to_multiple_of_power_of_2(remaining_read_range->size(), _metadata_log._alignment);
+                    assert(remaining_read_range->beg % _metadata_log._alignment == 0);
+                    return _metadata_log._device.read(remaining_read_range->beg, *buffer, expected_read_len, _pc).then(
+                            [buffer, remaining_read_range, current_read_len, expected_read_len](size_t read_len) {
+                        *current_read_len += read_len;
+                        remaining_read_range->beg += read_len;
+                        *buffer += read_len;
+
+                        if (read_len != expected_read_len) {
+                            // Partial read - end here
+                            return make_exception_future<>(partial_read_exception());
+                        }
+
+                        return now();
+                    });
+                }
+            }).then([this, remaining_read_range, current_read_len, buffer, init_aligned_disk_temp_buffer, copy_intersecting_data] {
+                if (remaining_read_range->is_empty()) {
+                    return make_ready_future<size_t>(*current_read_len);
+                } else {
+                    _prev_disk_read = init_aligned_disk_temp_buffer(*remaining_read_range);
+                    assert(_prev_disk_read._disk_range.size() == _metadata_log._alignment);
+
+                    return _metadata_log._device.read(_prev_disk_read._disk_range.beg, _prev_disk_read._data.get_write(),
+                            _prev_disk_read._disk_range.size(), _pc).then(
+                            [this, copy_intersecting_data, remaining_read_range, buffer, current_read_len](size_t read_len) {
+                        _prev_disk_read._disk_range.end = _prev_disk_read._disk_range.beg + read_len;
+                        auto copied_data = copy_intersecting_data(*buffer, *remaining_read_range, _prev_disk_read);
+                        return *current_read_len + copied_data;
+                    });
+                }
+            }).handle_exception_type([current_read_len] (partial_read_exception&) {
+                return *current_read_len;
+            });
+        } else {
+            _prev_disk_read = init_aligned_disk_temp_buffer(*remaining_read_range);
+
+            return _metadata_log._device.read(_prev_disk_read._disk_range.beg, _prev_disk_read._data.get_write(),
+                    _prev_disk_read._disk_range.size(), _pc).then(
+                    [this, copy_intersecting_data, remaining_read_range, buffer, current_read_len](size_t read_len) {
+                _prev_disk_read._disk_range.end = _prev_disk_read._disk_range.beg + read_len;
+                auto copied_data = copy_intersecting_data(*buffer, *remaining_read_range, _prev_disk_read);
+                return *current_read_len + copied_data;
+            });
+        }
     }
 
 public:
