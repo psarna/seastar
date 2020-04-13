@@ -21,15 +21,24 @@
 
 #pragma once
 
+#include "fs/cluster.hh"
+#include "fs/device_reader.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
-#include "fs/metadata_disk_entries.hh"
 #include "fs/metadata_log.hh"
-#include "fs/range.hh"
 #include "fs/units.hh"
+#include "seastar/core/do_with.hh"
+#include "seastar/core/file.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
-#include "seastar/core/temporary_buffer.hh"
+#include "seastar/fs/exceptions.hh"
+#include "seastar/fs/overloaded.hh"
+
+#include <cstdint>
+#include <cstring>
+#include <utility>
+#include <variant>
+#include <vector>
 
 namespace seastar::fs {
 
@@ -37,11 +46,15 @@ class read_operation {
     metadata_log& _metadata_log;
     inode_t _inode;
     const io_priority_class& _pc;
+    device_reader _disk_reader;
 
     read_operation(metadata_log& metadata_log, inode_t inode, const io_priority_class& pc)
-        : _metadata_log(metadata_log), _inode(inode), _pc(pc) {}
+        : _metadata_log(metadata_log)
+        , _inode(inode)
+        , _pc(pc)
+        , _disk_reader(_metadata_log._device, _metadata_log._alignment, _pc) {}
 
-    future<size_t> read(uint8_t* buffer, size_t read_len, file_offset_t file_offset) {
+    future<size_t> read(uint8_t* buffer, file_offset_t file_offset, size_t read_len) {
         auto inode_it = _metadata_log._inodes.find(_inode);
         if (inode_it == _metadata_log._inodes.end()) {
             return make_exception_future<size_t>(invalid_inode_exception());
@@ -95,14 +108,6 @@ class read_operation {
         });
     }
 
-    struct disk_temp_buffer {
-        disk_range _disk_range;
-        temporary_buffer<uint8_t> _data;
-    };
-    // Keep last disk read to accelerate next disk reads in cases where next read is intersecting previous disk read
-    // (after alignment)
-    disk_temp_buffer _prev_disk_read;
-
     future<size_t> do_read(inode_data_vec& data_vec, uint8_t* buffer) {
         size_t expected_read_len = data_vec.data_range.size();
 
@@ -116,63 +121,7 @@ class read_operation {
                 return make_ready_future<size_t>(expected_read_len);
             },
             [&](inode_data_vec::on_disk_data& disk_data) {
-                // TODO: we can optimize the case when disk_data.device_offset is aligned
-
-                // Copies data from source_buffer corresponding to the intersection of dest_disk_range
-                // and source_buffer.disk_range into buffer. dest_disk_range.beg corresponds to first byte of buffer
-                // Works when dest_disk_range.beg <= source_buffer._disk_range.beg
-                auto copy_left_intersecting_data =
-                        [](uint8_t* buffer, disk_range dest_disk_range, const disk_temp_buffer& source_buffer) -> size_t {
-                    disk_range intersect = intersection(dest_disk_range, source_buffer._disk_range);
-
-                    assert((intersect.is_empty() or dest_disk_range.beg >= source_buffer._disk_range.beg) and
-                            "Beggining of source buffer on disk should be before beggining of destination buffer on disk");
-
-                    if (not intersect.is_empty()) {
-                        // We can copy _data from disk_temp_buffer
-                        disk_offset_t common_data_len = intersect.size();
-                        disk_offset_t source_data_offset = dest_disk_range.beg - source_buffer._disk_range.beg;
-                        // TODO: maybe we should split that memcpy to multiple parts because large reads can lead
-                        // to spikes in latency
-                        std::memcpy(buffer, source_buffer._data.get() + source_data_offset, common_data_len);
-                        return common_data_len;
-                    } else {
-                        return 0;
-                    }
-                };
-
-                disk_range remaining_read_range {
-                    disk_data.device_offset,
-                    disk_data.device_offset + expected_read_len
-                };
-
-                size_t current_read_len = 0;
-                if (not _prev_disk_read._data.empty()) {
-                    current_read_len = copy_left_intersecting_data(buffer, remaining_read_range, _prev_disk_read);
-                    if (current_read_len == expected_read_len) {
-                        return make_ready_future<size_t>(expected_read_len);
-                    }
-                    remaining_read_range.beg += current_read_len;
-                    buffer += current_read_len;
-                }
-
-                disk_temp_buffer new_disk_read;
-                new_disk_read._disk_range = {
-                    round_down_to_multiple_of_power_of_2(remaining_read_range.beg, _metadata_log._alignment),
-                    round_up_to_multiple_of_power_of_2(remaining_read_range.end, _metadata_log._alignment)
-                };
-                new_disk_read._data = temporary_buffer<uint8_t>::aligned(_metadata_log._alignment, new_disk_read._disk_range.size());
-
-                return _metadata_log._device.read(new_disk_read._disk_range.beg, new_disk_read._data.get_write(),
-                        new_disk_read._disk_range.size(), _pc).then(
-                        [this, copy_left_intersecting_data = std::move(copy_left_intersecting_data),
-                        new_disk_read = std::move(new_disk_read),
-                        remaining_read_range, buffer, current_read_len](size_t read_len) mutable {
-                    new_disk_read._disk_range.end = new_disk_read._disk_range.beg + read_len;
-                    current_read_len += copy_left_intersecting_data(buffer, remaining_read_range, new_disk_read);
-                    _prev_disk_read = std::move(new_disk_read);
-                    return current_read_len;
-                });
+                return _disk_reader.read(buffer, disk_data.device_offset, expected_read_len);
             },
         }, data_vec.data_location);
     }
@@ -181,7 +130,7 @@ public:
     static future<size_t> perform(metadata_log& metadata_log, inode_t inode, file_offset_t pos, void* buffer,
             size_t len, const io_priority_class& pc) {
         return do_with(read_operation(metadata_log, inode, pc), [pos, buffer, len](auto& obj) {
-            return obj.read(static_cast<uint8_t*>(buffer), len, pos);
+            return obj.read(static_cast<uint8_t*>(buffer), pos, len);
         });
     }
 };

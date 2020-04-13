@@ -671,6 +671,8 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/cluster_allocator.hh
     src/fs/cluster_writer.hh
     src/fs/crc.hh
+    src/fs/device_reader.cc
+    src/fs/device_reader.hh
     src/fs/file.cc
     src/fs/inode.hh
     src/fs/inode_info.hh
