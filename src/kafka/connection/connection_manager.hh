@@ -26,8 +26,6 @@
 #include "../protocol/metadata_response.hh"
 #include "../protocol/metadata_request.hh"
 
-#include <boost/functional/hash.hpp>
-
 #include <map>
 
 namespace seastar {
@@ -62,7 +60,7 @@ public:
         _send_semaphore(1),
         _pending_queue(make_ready_future<>()) {}
 
-    future<> init(const std::vector<connection_id>& servers, uint32_t request_timeout);
+    future<> init(const std::set<connection_id>& servers, uint32_t request_timeout);
     lw_shared_ptr<kafka_connection> get_connection(const connection_id& connection);
     future<> disconnect(const connection_id& connection);
 

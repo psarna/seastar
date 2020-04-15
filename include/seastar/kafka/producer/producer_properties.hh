@@ -24,6 +24,7 @@
 
 #include <vector>
 #include <string>
+#include <set>
 #include <functional>
 
 #include "../../../../src/kafka/utils/partitioner.hh"
@@ -77,7 +78,7 @@ public:
     // Identifier of the created producer instance
     std::string _client_id {};
     // a list of host-port pairs to use for establishing the initial connection to the cluster
-    std::vector<std::pair<std::string, uint16_t>> _servers {};
+    std::set<std::pair<std::string, uint16_t>> _servers {};
 
     // Strategy according to which we should choose the target partition,
     // based on the given key (or lack thereof)

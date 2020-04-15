@@ -41,7 +41,7 @@ future<lw_shared_ptr<kafka_connection>> connection_manager::connect(const std::s
         });
 }
 
-future<> connection_manager::init(const std::vector<connection_id>& servers, uint32_t request_timeout) {
+future<> connection_manager::init(const std::set<connection_id>& servers, uint32_t request_timeout) {
     std::vector<future<>> fs;
 
     fs.reserve(servers.size());
