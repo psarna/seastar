@@ -38,32 +38,35 @@ sender::sender(connection_manager& connection_manager,
             _acks(acks) {}
 
 std::optional<sender::connection_id> sender::broker_for_topic_partition(const std::string& topic, int32_t partition_index) {
-    // TODO: Improve complexity from O(N) to O(log N).
     auto metadata = _metadata_manager.get_metadata();
-    for (const auto& current_topic : *metadata._topics) {
-        if (*current_topic._name != topic) {
-            continue;
-        }
-        if (current_topic._error_code != error::kafka_error_code::NONE) {
-            continue;
-        }
-        for (const auto& current_partition : *current_topic._partitions) {
-            if (*current_partition._partition_index == partition_index
-                && current_partition._error_code == error::kafka_error_code::NONE) {
-                return broker_for_id(*current_partition._leader_id);
-            }
+
+    auto topic_candidate = std::lower_bound((*metadata._topics).begin(), (*metadata._topics).end(), topic, [] (auto& a, auto& b) {
+        return *a._name < b;
+    });
+
+    if (*(*topic_candidate)._name == topic && (*topic_candidate)._error_code == error::kafka_error_code::NONE) {
+        auto it = std::lower_bound((*(*topic_candidate)._partitions).begin(), (*(*topic_candidate)._partitions).end(), partition_index, [] (auto& a, auto& b) {
+            return *a._partition_index < b;
+        });
+
+        if (*(*it)._partition_index == partition_index && (*it)._error_code == error::kafka_error_code::NONE) {
+            return broker_for_id(*(*it)._leader_id);
         }
     }
+
     return std::nullopt;
 }
 
 sender::connection_id sender::broker_for_id(int32_t id) {
     auto metadata = _metadata_manager.get_metadata();
-    for (const auto& broker : *metadata._brokers) {
-        if (*broker._node_id == id) {
-            return {*broker._host, *broker._port};
-        }
+    auto it = std::lower_bound((*metadata._brokers).begin(), (*metadata._brokers).end(), id, [] (auto& a, auto& b) {
+        return *a._node_id < b;
+    });
+
+    if (*(*it)._node_id == id) {
+        return {*(*it)._host, *(*it)._port};
     }
+
     return {};
 }
 

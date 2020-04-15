@@ -39,7 +39,7 @@ namespace kafka {
 
 struct send_exception : public std::runtime_error {
 public:
-    send_exception(const std::string& message) : runtime_error(message) {}
+    explicit send_exception(const std::string& message) : runtime_error(message) {}
 };
 
 struct sender_message {

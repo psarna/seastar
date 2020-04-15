@@ -24,6 +24,8 @@
 #include <seastar/core/sleep.hh>
 #include <seastar/core/thread.hh>
 
+#include <algorithm>
+
 namespace seastar {
 
 namespace kafka {
@@ -36,6 +38,25 @@ namespace kafka {
         req._include_topic_authorized_operations = true;
 
         return _connection_manager.ask_for_metadata(std::move(req)).then([this] (metadata_response metadata) {
+            std::sort((*metadata._brokers).begin(), (*metadata._brokers).end(), [] (auto& a, auto& b) {
+                return *a._node_id < *b._node_id;
+            });
+            std::sort((*metadata._topics).begin(), (*metadata._topics).end(), [] (auto& a, auto& b) {
+                if (*a._name == *b._name) {
+                    return a._error_code == error::kafka_error_code::NONE;
+                } else {
+                    return *a._name < *b._name;
+                }
+            });
+            for (auto& topic : *metadata._topics) {
+                std::sort((*topic._partitions).begin(), (*topic._partitions).end(), [] (auto& a, auto& b) {
+                    if (*a._partition_index == *b._partition_index) {
+                        return a._error_code == error::kafka_error_code::NONE;
+                    } else {
+                        return *a._partition_index < *b._partition_index;
+                    }
+                });
+            }
             _metadata = std::move(metadata);
         });
     }
