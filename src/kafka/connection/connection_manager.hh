@@ -49,7 +49,6 @@ private:
     std::map<connection_id, lw_shared_ptr<kafka_connection>> _connections;
     std::string _client_id;
 
-    semaphore _connect_semaphore;
     semaphore _send_semaphore;
 
     future<> _pending_queue;
@@ -60,7 +59,6 @@ public:
 
     explicit connection_manager(std::string client_id)
         : _client_id(std::move(client_id)),
-        _connect_semaphore(1),
         _send_semaphore(1),
         _pending_queue(make_ready_future<>()) {}
 

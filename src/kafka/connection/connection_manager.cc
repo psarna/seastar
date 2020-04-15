@@ -31,16 +31,14 @@ namespace seastar {
 namespace kafka {
 
 future<lw_shared_ptr<kafka_connection>> connection_manager::connect(const std::string& host, uint16_t port, uint32_t timeout) {
-    return with_semaphore(_connect_semaphore, 1, [this, host, port, timeout] {
-        auto conn = _connections.find({host, port});
-        return conn != _connections.end()
-               ? make_ready_future<lw_shared_ptr<kafka_connection>>(conn->second)
-               : kafka_connection::connect(host, port, _client_id, timeout)
-               .then([this, host, port] (lw_shared_ptr<kafka_connection> conn) {
-                    _connections.insert({{host, port}, conn});
-                    return conn;
-                });
-    });
+    auto conn = _connections.find({host, port});
+    return conn != _connections.end()
+       ? make_ready_future<lw_shared_ptr<kafka_connection>>(conn->second)
+       : kafka_connection::connect(host, port, _client_id, timeout)
+       .then([this, host, port] (lw_shared_ptr<kafka_connection> conn) {
+            _connections.insert({{host, port}, conn});
+            return conn;
+        });
 }
 
 future<> connection_manager::init(const std::vector<connection_id>& servers, uint32_t request_timeout) {
