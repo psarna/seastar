@@ -86,7 +86,9 @@ seastar::future<> kafka_producer::flush() {
 }
 
 seastar::future<> kafka_producer::disconnect() {
-    return _metadata_manager.stop_refresh();
+    return _metadata_manager.stop_refresh().then([this] () {
+        return _connection_manager.disconnect_all();
+    });
 }
 
 }

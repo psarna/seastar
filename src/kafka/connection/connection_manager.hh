@@ -36,7 +36,7 @@ namespace kafka {
 
 struct metadata_refresh_exception : public std::runtime_error {
 public:
-    metadata_refresh_exception(const std::string& message) : runtime_error(message) {}
+    explicit metadata_refresh_exception(const std::string& message) : runtime_error(message) {}
 };
 
 class connection_manager {
@@ -52,6 +52,8 @@ private:
     semaphore _connect_semaphore;
     semaphore _send_semaphore;
 
+    future<> _pending_queue;
+
     future<lw_shared_ptr<kafka_connection>> connect(const std::string& host, uint16_t port, uint32_t timeout);
 
 public:
@@ -59,7 +61,8 @@ public:
     explicit connection_manager(std::string client_id)
         : _client_id(std::move(client_id)),
         _connect_semaphore(1),
-        _send_semaphore(1) {}
+        _send_semaphore(1),
+        _pending_queue(make_ready_future<>()) {}
 
     future<> init(const std::vector<connection_id>& servers, uint32_t request_timeout);
     lw_shared_ptr<kafka_connection> get_connection(const connection_id& connection);
@@ -102,10 +105,11 @@ public:
             }
         }).then([](future<typename RequestType::response_type> send_future) {
             return send_future;
-        }).handle_exception([] (std::exception_ptr ep) {
-            // Handle connect exceptions.
-            // TODO: Disconnect in case of broken connection.
+        }).handle_exception([this, host, port] (std::exception_ptr ep) {
             try {
+                _pending_queue = _pending_queue.discard_result().then([this, host, port] {
+                   return disconnect({host, port});
+                });
                 std::rethrow_exception(ep);
             } catch (seastar::timed_out_error& e) {
                 typename RequestType::response_type response;
@@ -120,6 +124,8 @@ public:
     }
 
     future<metadata_response> ask_for_metadata(metadata_request&& request);
+
+    future<> disconnect_all();
 
 };
 

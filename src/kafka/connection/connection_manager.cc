@@ -24,6 +24,8 @@
 #include <seastar/core/thread.hh>
 #include <memory>
 
+#include <utility>
+
 namespace seastar {
 
 namespace kafka {
@@ -91,6 +93,16 @@ future<metadata_response> connection_manager::ask_for_metadata(seastar::kafka::m
         });
     });
 
+}
+
+future<> connection_manager::disconnect_all() {
+    for (auto& it : _connections) {
+        _pending_queue = _pending_queue.discard_result().then([this, host = it.first.first, port = it.first.second] {
+            return disconnect({host, port});
+        });
+    }
+
+    return _pending_queue.discard_result();
 }
 
 }
