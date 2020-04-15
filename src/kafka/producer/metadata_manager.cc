@@ -62,13 +62,21 @@ namespace kafka {
     }
 
     seastar::future<> metadata_manager::refresh_coroutine(std::chrono::milliseconds dur) {
-        return seastar::async({}, [this, dur]{
-            while(_keep_refreshing) {
+        return seastar::do_until([this]{return ! _keep_refreshing;}, [this, dur]{
+            return seastar::sleep_abortable(dur, _stop_refresh).then([this] {
+                return refresh_metadata();
+            }).handle_exception([this] (std::exception_ptr ep) {
                 try {
-                    seastar::sleep_abortable(dur, _stop_refresh).get();
-                } catch (seastar::sleep_aborted& e) {}
-                refresh_metadata().wait();
-            }
+                    std::rethrow_exception(ep);
+                } catch (seastar::sleep_aborted& e) {
+                    return make_ready_future();
+                } catch (...) {
+                    // no other exception should happen here,
+                    // if they do, they have to be handled individually
+                    std::rethrow_exception(ep);
+                }
+            });
+        }).then([this]{
             _refresh_finished.signal();
             return;
         });
