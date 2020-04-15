@@ -92,8 +92,8 @@ public:
             auto conn = get_connection({host, port});
             if (conn.get() != nullptr) {
                 auto send_future = with_response
-                                   ? conn->send(std::move(request)).finally([conn]{})
-                                   : conn->send_without_response(std::move(request)).finally([conn]{});
+                        ? conn->send(std::move(request)).finally([conn]{})
+                        : conn->send_without_response(std::move(request)).finally([conn]{});
                 return make_ready_future<decltype(send_future)>(std::move(send_future));
             } else {
                 return connect(host, port, timeout).then([request = std::move(request), with_response](auto conn) {

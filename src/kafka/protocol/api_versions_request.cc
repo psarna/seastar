@@ -22,6 +22,6 @@
 
 #include "api_versions_request.hh"
 
-void seastar::kafka::api_versions_request::serialize(std::ostream &os, int16_t api_version) const {}
+void seastar::kafka::api_versions_request::serialize(std::ostream& os, int16_t api_version) const {}
 
-void seastar::kafka::api_versions_request::deserialize(std::istream &is, int16_t api_version) {}
+void seastar::kafka::api_versions_request::deserialize(std::istream& is, int16_t api_version) {}

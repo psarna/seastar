@@ -48,7 +48,7 @@ public:
         bool is_retriable,
         bool is_invalid_metadata);
 
-    static const kafka_error_code &get_error(int16_t value);
+    static const kafka_error_code& get_error(int16_t value);
 
     static const kafka_error_code UNKNOWN_SERVER_ERROR;
     static const kafka_error_code NONE;
@@ -141,7 +141,7 @@ public:
     static const kafka_error_code INVALID_RECORD;
 
 private:
-    static std::unordered_map<int16_t, const kafka_error_code &> errors;
+    static std::unordered_map<int16_t, const kafka_error_code&> errors;
 };
 
 }

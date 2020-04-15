@@ -26,7 +26,7 @@ namespace seastar {
 
 namespace kafka {
 
-void metadata_response_broker::serialize(std::ostream &os, int16_t api_version) const {
+void metadata_response_broker::serialize(std::ostream& os, int16_t api_version) const {
     _node_id.serialize(os, api_version);
     _host.serialize(os, api_version);
     _port.serialize(os, api_version);
@@ -35,7 +35,7 @@ void metadata_response_broker::serialize(std::ostream &os, int16_t api_version) 
     }
 }
 
-void metadata_response_broker::deserialize(std::istream &is, int16_t api_version) {
+void metadata_response_broker::deserialize(std::istream& is, int16_t api_version) {
     _node_id.deserialize(is, api_version);
     _host.deserialize(is, api_version);
     _port.deserialize(is, api_version);
@@ -44,7 +44,7 @@ void metadata_response_broker::deserialize(std::istream &is, int16_t api_version
     }
 }
 
-void metadata_response_partition::serialize(std::ostream &os, int16_t api_version) const {
+void metadata_response_partition::serialize(std::ostream& os, int16_t api_version) const {
     _error_code.serialize(os, api_version);
     _partition_index.serialize(os, api_version);
     _leader_id.serialize(os, api_version);
@@ -58,7 +58,7 @@ void metadata_response_partition::serialize(std::ostream &os, int16_t api_versio
     }
 }
 
-void metadata_response_partition::deserialize(std::istream &is, int16_t api_version) {
+void metadata_response_partition::deserialize(std::istream& is, int16_t api_version) {
     _error_code.deserialize(is, api_version);
     _partition_index.deserialize(is, api_version);
     _leader_id.deserialize(is, api_version);
@@ -72,7 +72,7 @@ void metadata_response_partition::deserialize(std::istream &is, int16_t api_vers
     }
 }
 
-void metadata_response_topic::serialize(std::ostream &os, int16_t api_version) const {
+void metadata_response_topic::serialize(std::ostream& os, int16_t api_version) const {
     _error_code.serialize(os, api_version);
     _name.serialize(os, api_version);
     if (api_version >= 1) {
@@ -84,7 +84,7 @@ void metadata_response_topic::serialize(std::ostream &os, int16_t api_version) c
     }
 }
 
-void metadata_response_topic::deserialize(std::istream &is, int16_t api_version) {
+void metadata_response_topic::deserialize(std::istream& is, int16_t api_version) {
     _error_code.deserialize(is, api_version);
     _name.deserialize(is, api_version);
     if (api_version >= 1) {
@@ -96,7 +96,7 @@ void metadata_response_topic::deserialize(std::istream &is, int16_t api_version)
     }
 }
 
-void metadata_response::serialize(std::ostream &os, int16_t api_version) const {
+void metadata_response::serialize(std::ostream& os, int16_t api_version) const {
     if (api_version >= 3) {
         _throttle_time_ms.serialize(os, api_version);
     }
@@ -113,7 +113,7 @@ void metadata_response::serialize(std::ostream &os, int16_t api_version) const {
     }
 }
 
-void metadata_response::deserialize(std::istream &is, int16_t api_version) {
+void metadata_response::deserialize(std::istream& is, int16_t api_version) {
     if (api_version >= 3) {
         _throttle_time_ms.deserialize(is, api_version);
     }

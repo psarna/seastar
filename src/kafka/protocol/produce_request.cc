@@ -26,27 +26,27 @@ namespace seastar {
 
 namespace kafka {
 
-void produce_request_partition_produce_data::serialize(std::ostream &os, int16_t api_version) const {
+void produce_request_partition_produce_data::serialize(std::ostream& os, int16_t api_version) const {
     _partition_index.serialize(os, api_version);
     _records.serialize(os, api_version);
 }
 
-void produce_request_partition_produce_data::deserialize(std::istream &is, int16_t api_version) {
+void produce_request_partition_produce_data::deserialize(std::istream& is, int16_t api_version) {
     _partition_index.deserialize(is, api_version);
     _records.deserialize(is, api_version);
 }
 
-void produce_request_topic_produce_data::serialize(std::ostream &os, int16_t api_version) const {
+void produce_request_topic_produce_data::serialize(std::ostream& os, int16_t api_version) const {
     _name.serialize(os, api_version);
     _partitions.serialize(os, api_version);
 }
 
-void produce_request_topic_produce_data::deserialize(std::istream &is, int16_t api_version) {
+void produce_request_topic_produce_data::deserialize(std::istream& is, int16_t api_version) {
     _name.deserialize(is, api_version);
     _partitions.deserialize(is, api_version);
 }
 
-void produce_request::serialize(std::ostream &os, int16_t api_version) const {
+void produce_request::serialize(std::ostream& os, int16_t api_version) const {
     if (api_version >= 3) {
         _transactional_id.serialize(os, api_version);
     }
@@ -55,7 +55,7 @@ void produce_request::serialize(std::ostream &os, int16_t api_version) const {
     _topics.serialize(os, api_version);
 }
 
-void produce_request::deserialize(std::istream &is, int16_t api_version) {
+void produce_request::deserialize(std::istream& is, int16_t api_version) {
     if (api_version >= 3) {
         _transactional_id.deserialize(is, api_version);
     }

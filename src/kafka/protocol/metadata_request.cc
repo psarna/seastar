@@ -26,15 +26,15 @@ namespace seastar {
 
 namespace kafka {
 
-void metadata_request_topic::serialize(std::ostream &os, int16_t api_version) const {
+void metadata_request_topic::serialize(std::ostream& os, int16_t api_version) const {
     _name.serialize(os, api_version);
 }
 
-void metadata_request_topic::deserialize(std::istream &is, int16_t api_version) {
+void metadata_request_topic::deserialize(std::istream& is, int16_t api_version) {
     _name.deserialize(is, api_version);
 }
 
-void metadata_request::serialize(std::ostream &os, int16_t api_version) const {
+void metadata_request::serialize(std::ostream& os, int16_t api_version) const {
     _topics.serialize(os, api_version);
     if (api_version >= 4) {
         _allow_auto_topic_creation.serialize(os, api_version);
@@ -45,7 +45,7 @@ void metadata_request::serialize(std::ostream &os, int16_t api_version) const {
     }
 }
 
-void metadata_request::deserialize(std::istream &is, int16_t api_version) {
+void metadata_request::deserialize(std::istream& is, int16_t api_version) {
     _topics.deserialize(is, api_version);
     if (api_version >= 4) {
         _allow_auto_topic_creation.deserialize(is, api_version);

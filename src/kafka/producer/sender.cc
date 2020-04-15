@@ -40,7 +40,7 @@ sender::sender(connection_manager& connection_manager,
 std::optional<sender::connection_id> sender::broker_for_topic_partition(const std::string& topic, int32_t partition_index) {
     // TODO: Improve complexity from O(N) to O(log N).
     auto metadata = _metadata_manager.get_metadata();
-    for (const auto &current_topic : *metadata._topics) {
+    for (const auto& current_topic : *metadata._topics) {
         if (*current_topic._name != topic) {
             continue;
         }

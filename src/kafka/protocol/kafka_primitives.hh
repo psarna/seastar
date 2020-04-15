@@ -53,31 +53,31 @@ public:
 
     explicit kafka_number_t(NumberType value) noexcept : _value(value) {}
 
-    [[nodiscard]] const NumberType &operator*() const noexcept { return _value; }
+    [[nodiscard]] const NumberType& operator*() const noexcept { return _value; }
 
-    [[nodiscard]] NumberType &operator*() noexcept { return _value; }
+    [[nodiscard]] NumberType& operator*() noexcept { return _value; }
 
-    kafka_number_t &operator=(NumberType value) noexcept {
+    kafka_number_t& operator=(NumberType value) noexcept {
         _value = value;
         return *this;
     }
 
-    void serialize(std::ostream &os, int16_t api_version) const {
+    void serialize(std::ostream& os, int16_t api_version) const {
         std::array<char, NUMBER_SIZE> buffer{};
         auto value = net::hton(_value);
-        auto value_pointer = reinterpret_cast<const char *>(&value);
+        auto value_pointer = reinterpret_cast<const char*>(&value);
         std::copy(value_pointer, value_pointer + NUMBER_SIZE, buffer.begin());
 
         os.write(buffer.data(), NUMBER_SIZE);
     }
 
-    void deserialize(std::istream &is, int16_t api_version) {
+    void deserialize(std::istream& is, int16_t api_version) {
         std::array<char, NUMBER_SIZE> buffer{};
         is.read(buffer.data(), NUMBER_SIZE);
         if (is.gcount() != NUMBER_SIZE) {
             throw parsing_exception("Stream ended prematurely when reading number");
         }
-        _value = net::ntoh(*reinterpret_cast<NumberType *>(buffer.data()));
+        _value = net::ntoh(*reinterpret_cast<NumberType*>(buffer.data()));
     }
 };
 
@@ -88,45 +88,45 @@ private:
 
 public:
     kafka_error_code_t() noexcept : _value(0) {}
-    kafka_error_code_t(const error::kafka_error_code &error) noexcept : _value(error._error_code) {}
+    kafka_error_code_t(const error::kafka_error_code& error) noexcept : _value(error._error_code) {}
 
-    [[nodiscard]] const error::kafka_error_code &operator*() const noexcept {
+    [[nodiscard]] const error::kafka_error_code& operator*() const noexcept {
         return error::kafka_error_code::get_error(_value);
     }
 
-    kafka_error_code_t &operator=(const error::kafka_error_code& error) noexcept {
+    kafka_error_code_t& operator=(const error::kafka_error_code& error) noexcept {
         _value = error._error_code;
         return *this;
     }
 
-    void serialize(std::ostream &os, int16_t api_version) const {
+    void serialize(std::ostream& os, int16_t api_version) const {
         std::array<char, NUMBER_SIZE> buffer{};
         auto value = net::hton(_value);
-        auto value_pointer = reinterpret_cast<const char *>(&value);
+        auto value_pointer = reinterpret_cast<const char*>(&value);
         std::copy(value_pointer, value_pointer + NUMBER_SIZE, buffer.begin());
 
         os.write(buffer.data(), NUMBER_SIZE);
     }
 
-    void deserialize(std::istream &is, int16_t api_version) {
+    void deserialize(std::istream& is, int16_t api_version) {
         std::array<char, NUMBER_SIZE> buffer{};
         is.read(buffer.data(), NUMBER_SIZE);
         if (is.gcount() != NUMBER_SIZE) {
             throw parsing_exception("Stream ended prematurely when reading number");
         }
-        _value = net::ntoh(*reinterpret_cast<int16_t *>(buffer.data()));
+        _value = net::ntoh(*reinterpret_cast<int16_t*>(buffer.data()));
         try {
             error::kafka_error_code::get_error(_value);
-        } catch (const std::out_of_range &e) {
+        } catch (const std::out_of_range& e) {
             throw parsing_exception("Error with such code does not exist");
         }
     }
 
-    bool operator==(const error::kafka_error_code &other) const {
+    bool operator==(const error::kafka_error_code& other) const {
         return other._error_code == this->_value;
     }
 
-    bool operator!=(const error::kafka_error_code &other) const {
+    bool operator!=(const error::kafka_error_code& other) const {
         return ! (*this == other);
     }
 };
@@ -146,16 +146,16 @@ public:
 
     explicit kafka_varint_t(int32_t value) noexcept : _value(value) {}
 
-    [[nodiscard]] const int32_t &operator*() const noexcept { return _value; }
+    [[nodiscard]] const int32_t& operator*() const noexcept { return _value; }
 
-    [[nodiscard]] int32_t &operator*() noexcept { return _value; }
+    [[nodiscard]] int32_t& operator*() noexcept { return _value; }
 
-    kafka_varint_t &operator=(int32_t value) noexcept {
+    kafka_varint_t& operator=(int32_t value) noexcept {
         _value = value;
         return *this;
     }
 
-    void serialize(std::ostream &os, int16_t api_version) const {
+    void serialize(std::ostream& os, int16_t api_version) const {
         auto current_value = (static_cast<uint32_t>(_value) << 1) ^ static_cast<uint32_t>(_value >> 31);
         do {
             uint8_t current_byte = current_value & 0x7F;
@@ -167,7 +167,7 @@ public:
         } while (current_value != 0);
     }
 
-    void deserialize(std::istream &is, int16_t api_version) {
+    void deserialize(std::istream& is, int16_t api_version) {
         uint32_t current_value = 0;
         int32_t current_offset = 0;
         char current_byte = 0;
@@ -200,32 +200,32 @@ public:
 
     explicit kafka_buffer_t(std::string value) : _value(std::move(value)) {}
 
-    [[nodiscard]] const std::string &operator*() const noexcept { return _value; }
+    [[nodiscard]] const std::string& operator*() const noexcept { return _value; }
 
-    [[nodiscard]] std::string &operator*() noexcept { return _value; }
+    [[nodiscard]] std::string& operator*() noexcept { return _value; }
 
-    [[nodiscard]] const std::string *operator->() const noexcept { return &_value; }
+    [[nodiscard]] const std::string* operator->() const noexcept { return &_value; }
 
-    [[nodiscard]] std::string *operator->() noexcept { return &_value; }
+    [[nodiscard]] std::string* operator->() noexcept { return &_value; }
 
-    kafka_buffer_t &operator=(const std::string &value) {
+    kafka_buffer_t& operator=(const std::string& value) {
         _value = value;
         return *this;
     }
 
-    kafka_buffer_t &operator=(std::string &&value) noexcept {
+    kafka_buffer_t& operator=(std::string&& value) noexcept {
         _value = std::move(value);
         return *this;
     }
 
-    void serialize(std::ostream &os, int16_t api_version) const {
+    void serialize(std::ostream& os, int16_t api_version) const {
         SizeType length(_value.size());
         length.serialize(os, api_version);
 
         os.write(_value.data(), _value.size());
     }
 
-    void deserialize(std::istream &is, int16_t api_version) {
+    void deserialize(std::istream& is, int16_t api_version) {
         SizeType length;
         length.deserialize(is, api_version);
         // TODO: Max length check
@@ -261,47 +261,47 @@ public:
         _is_null = true;
     }
 
-    [[nodiscard]] const std::string &operator*() const {
+    [[nodiscard]] const std::string& operator*() const {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return _value;
     }
 
-    [[nodiscard]] std::string &operator*() {
+    [[nodiscard]] std::string& operator*() {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return _value;
     }
 
-    [[nodiscard]] const std::string *operator->() const {
+    [[nodiscard]] const std::string* operator->() const {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return &_value;
     }
 
-    [[nodiscard]] std::string *operator->() {
+    [[nodiscard]] std::string* operator->() {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return &_value;
     }
 
-    kafka_nullable_buffer_t &operator=(const std::string &value) {
+    kafka_nullable_buffer_t& operator=(const std::string& value) {
         _value = value;
         _is_null = false;
         return *this;
     }
 
-    kafka_nullable_buffer_t &operator=(std::string &&value) noexcept {
+    kafka_nullable_buffer_t& operator=(std::string&& value) noexcept {
         _value = std::move(value);
         _is_null = false;
         return *this;
     }
 
-    void serialize(std::ostream &os, int16_t api_version) const {
+    void serialize(std::ostream& os, int16_t api_version) const {
         if (_is_null) {
             SizeType null_indicator(-1);
             null_indicator.serialize(os, api_version);
@@ -312,7 +312,7 @@ public:
         }
     }
 
-    void deserialize(std::istream &is, int16_t api_version) {
+    void deserialize(std::istream& is, int16_t api_version) {
         SizeType length;
         length.deserialize(is, api_version);
         if (*length >= 0) {
@@ -353,55 +353,55 @@ public:
 
     [[nodiscard]] bool is_null() const noexcept { return _is_null; }
 
-    [[nodiscard]] ElementType &operator[](size_t i) {
+    [[nodiscard]] ElementType& operator[](size_t i) {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return _elems[i];
     }
 
-    [[nodiscard]] const ElementType &operator[](size_t i) const {
+    [[nodiscard]] const ElementType& operator[](size_t i) const {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return _elems[i];
     }
 
-    [[nodiscard]] const std::vector<ElementType> &operator*() const {
+    [[nodiscard]] const std::vector<ElementType>& operator*() const {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return _elems;
     }
 
-    [[nodiscard]] std::vector<ElementType> &operator*() {
+    [[nodiscard]] std::vector<ElementType>& operator*() {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return _elems;
     }
 
-    [[nodiscard]] const std::vector<ElementType> *operator->() const {
+    [[nodiscard]] const std::vector<ElementType>* operator->() const {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return &_elems;
     }
 
-    [[nodiscard]] std::vector<ElementType> *operator->() {
+    [[nodiscard]] std::vector<ElementType>* operator->() {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return &_elems;
     }
 
-    kafka_array_t &operator=(const std::vector<ElementType> &elems) {
+    kafka_array_t& operator=(const std::vector<ElementType>& elems) {
         _elems = elems;
         _is_null = false;
         return *this;
     }
 
-    kafka_array_t &operator=(std::vector<ElementType> &&elems) noexcept {
+    kafka_array_t& operator=(std::vector<ElementType>&& elems) noexcept {
         _elems = std::move(elems);
         _is_null = false;
         return *this;
@@ -412,20 +412,20 @@ public:
         _is_null = true;
     }
 
-    void serialize(std::ostream &os, int16_t api_version) const {
+    void serialize(std::ostream& os, int16_t api_version) const {
         if (_is_null) {
             ElementCountType null_indicator(-1);
             null_indicator.serialize(os, api_version);
         } else {
             ElementCountType length(_elems.size());
             length.serialize(os, api_version);
-            for (const auto &elem : _elems) {
+            for (const auto& elem : _elems) {
                 elem.serialize(os, api_version);
             }
         }
     }
 
-    void deserialize(std::istream &is, int16_t api_version) {
+    void deserialize(std::istream& is, int16_t api_version) {
         ElementCountType length;
         length.deserialize(is, api_version);
         if (*length >= 0) {

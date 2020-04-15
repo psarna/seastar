@@ -33,18 +33,18 @@ class partitioner {
 
 public:
 
-    virtual metadata_response_partition get_partition(const std::string &key, const kafka_array_t<metadata_response_partition> &partitions) = 0;
+    virtual metadata_response_partition get_partition(const std::string& key, const kafka_array_t<metadata_response_partition>& partitions) = 0;
 
 };
 
 class basic_partitioner : public partitioner {
 public:
-    metadata_response_partition get_partition(const std::string &key, const kafka_array_t<metadata_response_partition> &partitions) override;
+    metadata_response_partition get_partition(const std::string& key, const kafka_array_t<metadata_response_partition>& partitions) override;
 };
 
 class rr_partitioner : public partitioner {
 public:
-    metadata_response_partition get_partition(const std::string &key, const kafka_array_t<metadata_response_partition> &partitions) override;
+    metadata_response_partition get_partition(const std::string& key, const kafka_array_t<metadata_response_partition>& partitions) override;
 private:
     uint32_t counter = 0;
 };

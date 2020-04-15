@@ -31,7 +31,7 @@ namespace seastar {
 
 namespace kafka {
 
-void kafka_record_header::serialize(std::ostream &os, int16_t api_version) const {
+void kafka_record_header::serialize(std::ostream& os, int16_t api_version) const {
     kafka_varint_t header_key_length(_header_key.size());
     header_key_length.serialize(os, api_version);
     os.write(_header_key.data(), _header_key.size());
@@ -41,7 +41,7 @@ void kafka_record_header::serialize(std::ostream &os, int16_t api_version) const
     os.write(_value.data(), _value.size());
 }
 
-void kafka_record_header::deserialize(std::istream &is, int16_t api_version) {
+void kafka_record_header::deserialize(std::istream& is, int16_t api_version) {
     kafka_buffer_t<kafka_varint_t> header_key;
     header_key.deserialize(is, api_version);
     _header_key.swap(*header_key);
@@ -51,7 +51,7 @@ void kafka_record_header::deserialize(std::istream &is, int16_t api_version) {
     _value.swap(*value);
 }
 
-void kafka_record::serialize(std::ostream &os, int16_t api_version) const {
+void kafka_record::serialize(std::ostream& os, int16_t api_version) const {
     std::vector<char> record_data;
     boost::iostreams::back_insert_device<std::vector<char>> record_data_sink{record_data};
     boost::iostreams::stream<boost::iostreams::back_insert_device<std::vector<char>>> record_data_stream{record_data_sink};
@@ -75,7 +75,7 @@ void kafka_record::serialize(std::ostream &os, int16_t api_version) const {
     kafka_varint_t header_count(_headers.size());
     header_count.serialize(record_data_stream, api_version);
 
-    for (const auto &header : _headers) {
+    for (const auto& header : _headers) {
         header.serialize(record_data_stream, api_version);
     }
     record_data_stream.flush();
@@ -86,7 +86,7 @@ void kafka_record::serialize(std::ostream &os, int16_t api_version) const {
     os.write(record_data.data(), record_data.size());
 }
 
-void kafka_record::deserialize(std::istream &is, int16_t api_version) {
+void kafka_record::deserialize(std::istream& is, int16_t api_version) {
     kafka_varint_t length;
     length.deserialize(is, api_version);
     if (*length < 0) {
@@ -119,7 +119,7 @@ void kafka_record::deserialize(std::istream &is, int16_t api_version) {
     }
 }
 
-void kafka_record_batch::serialize(std::ostream &os, int16_t api_version) const {
+void kafka_record_batch::serialize(std::ostream& os, int16_t api_version) const {
     if (*_magic != 2) {
         // TODO: Implement parsing of versions 0, 1.
         throw parsing_exception("Unsupported version of record batch");
@@ -152,7 +152,7 @@ void kafka_record_batch::serialize(std::ostream &os, int16_t api_version) const 
     _first_timestamp.serialize(payload_stream, api_version);
 
     int32_t max_timestamp_delta = 0;
-    for (const auto &record : _records) {
+    for (const auto& record : _records) {
         max_timestamp_delta = std::max(max_timestamp_delta, *record._timestamp_delta);
     }
     kafka_int64_t max_timestamp(*_first_timestamp + max_timestamp_delta);
@@ -168,7 +168,7 @@ void kafka_record_batch::serialize(std::ostream &os, int16_t api_version) const 
     boost::iostreams::back_insert_device<std::vector<char>> serialized_records_sink{serialized_records};
     boost::iostreams::stream<boost::iostreams::back_insert_device<std::vector<char>>> serialized_records_stream{serialized_records_sink};
 
-    for (const auto &record : _records) {
+    for (const auto& record : _records) {
         record.serialize(serialized_records_stream, api_version);
     }
 
@@ -207,7 +207,7 @@ void kafka_record_batch::serialize(std::ostream &os, int16_t api_version) const 
     os.write(payload.data(), payload.size());
 }
 
-void kafka_record_batch::deserialize(std::istream &is, int16_t api_version) {
+void kafka_record_batch::deserialize(std::istream& is, int16_t api_version) {
     // Move to magic byte, read it and return back to start.
     auto start_position = is.tellg();
     is.seekg(8 + 4 + 4, std::ios_base::cur);
@@ -303,7 +303,7 @@ void kafka_record_batch::deserialize(std::istream &is, int16_t api_version) {
     }
 
     boost::iostreams::stream<boost::iostreams::array_source> records_stream(records_payload.data(), records_payload.size());
-    for (auto &record : _records) {
+    for (auto& record : _records) {
         record.deserialize(records_stream, api_version);
     }
 
@@ -312,12 +312,12 @@ void kafka_record_batch::deserialize(std::istream &is, int16_t api_version) {
     }
 }
 
-void kafka_records::serialize(std::ostream &os, int16_t api_version) const {
+void kafka_records::serialize(std::ostream& os, int16_t api_version) const {
     std::vector<char> serialized_batches;
     boost::iostreams::back_insert_device<std::vector<char>> serialized_batches_sink{serialized_batches};
     boost::iostreams::stream<boost::iostreams::back_insert_device<std::vector<char>>> serialized_batches_stream{serialized_batches_sink};
 
-    for (const auto &batch : _record_batches) {
+    for (const auto& batch : _record_batches) {
         batch.serialize(serialized_batches_stream, api_version);
     }
 
@@ -329,7 +329,7 @@ void kafka_records::serialize(std::ostream &os, int16_t api_version) const {
     os.write(serialized_batches.data(), serialized_batches.size());
 }
 
-void kafka_records::deserialize(std::istream &is, int16_t api_version) {
+void kafka_records::deserialize(std::istream& is, int16_t api_version) {
     kafka_int32_t records_length;
     records_length.deserialize(is, api_version);
     if (*records_length < 0) {

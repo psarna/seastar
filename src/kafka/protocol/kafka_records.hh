@@ -35,9 +35,9 @@ public:
     std::string _header_key;
     std::string _value;
 
-    void serialize(std::ostream &os, int16_t api_version) const;
+    void serialize(std::ostream& os, int16_t api_version) const;
 
-    void deserialize(std::istream &is, int16_t api_version);
+    void deserialize(std::istream& is, int16_t api_version);
 };
 
 class kafka_record {
@@ -48,9 +48,9 @@ public:
     std::string _value;
     std::vector<kafka_record_header> _headers;
 
-    void serialize(std::ostream &os, int16_t api_version) const;
+    void serialize(std::ostream& os, int16_t api_version) const;
 
-    void deserialize(std::istream &is, int16_t api_version);
+    void deserialize(std::istream& is, int16_t api_version);
 };
 
 enum class kafka_record_compression_type {
@@ -79,18 +79,18 @@ public:
 
     std::vector<kafka_record> _records;
 
-    void serialize(std::ostream &os, int16_t api_version) const;
+    void serialize(std::ostream& os, int16_t api_version) const;
 
-    void deserialize(std::istream &is, int16_t api_version);
+    void deserialize(std::istream& is, int16_t api_version);
 };
 
 class kafka_records {
 public:
     std::vector<kafka_record_batch> _record_batches;
 
-    void serialize(std::ostream &os, int16_t api_version) const;
+    void serialize(std::ostream& os, int16_t api_version) const;
 
-    void deserialize(std::istream &is, int16_t api_version);
+    void deserialize(std::istream& is, int16_t api_version);
 };
 
 }
