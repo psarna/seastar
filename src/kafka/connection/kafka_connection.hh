@@ -38,7 +38,7 @@ namespace kafka {
 class kafka_connection final {
 
     tcp_connection _connection;
-    std::string _client_id;
+    seastar::sstring _client_id;
     int32_t _correlation_id;
     api_versions_response _api_versions;
     semaphore _send_semaphore;
@@ -111,10 +111,10 @@ class kafka_connection final {
     future<> init();
 
 public:
-    static future<lw_shared_ptr<kafka_connection>> connect(const std::string& host, uint16_t port,
-            const std::string& client_id, uint32_t timeout_ms);
+    static future<lw_shared_ptr<kafka_connection>> connect(const seastar::sstring& host, uint16_t port,
+            const seastar::sstring& client_id, uint32_t timeout_ms);
 
-    kafka_connection(tcp_connection connection, std::string client_id) :
+    kafka_connection(tcp_connection connection, seastar::sstring client_id) :
         _connection(std::move(connection)),
         _client_id(std::move(client_id)),
         _correlation_id(0),

@@ -30,7 +30,7 @@ namespace seastar {
 
 namespace kafka {
 
-future<lw_shared_ptr<kafka_connection>> connection_manager::connect(const std::string& host, uint16_t port, uint32_t timeout) {
+future<lw_shared_ptr<kafka_connection>> connection_manager::connect(const seastar::sstring& host, uint16_t port, uint32_t timeout) {
     auto conn = _connections.find({host, port});
     return conn != _connections.end()
        ? make_ready_future<lw_shared_ptr<kafka_connection>>(conn->second)

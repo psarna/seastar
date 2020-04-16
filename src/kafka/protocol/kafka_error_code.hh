@@ -25,7 +25,7 @@
 #include <string>
 #include <cstdint>
 #include <unordered_map>
-#include <iostream>
+#include <seastar/core/sstring.hh>
 
 namespace seastar {
 
@@ -38,13 +38,13 @@ class kafka_error_code {
 public:
 
     int16_t _error_code;
-    std::string _error_message;
+    seastar::sstring _error_message;
     bool _is_retriable;
     bool _is_invalid_metadata;
 
     kafka_error_code(
         int16_t error_code,
-        std::string error_message,
+        seastar::sstring error_message,
         bool is_retriable,
         bool is_invalid_metadata);
 

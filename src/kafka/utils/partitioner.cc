@@ -27,16 +27,15 @@ namespace seastar {
 
 namespace kafka {
 
-metadata_response_partition basic_partitioner::get_partition(const std::string& key, const kafka_array_t<metadata_response_partition>& partitions) {
+metadata_response_partition basic_partitioner::get_partition(const seastar::sstring& key, const kafka_array_t<metadata_response_partition>& partitions) {
     size_t index = std::rand() % partitions->size();
     return partitions[index];
 }
 
-metadata_response_partition rr_partitioner::get_partition(const std::string& key, const kafka_array_t<metadata_response_partition>& partitions) {
+metadata_response_partition rr_partitioner::get_partition(const seastar::sstring& key, const kafka_array_t<metadata_response_partition>& partitions) {
     if(!key.empty()) {
-        boost::hash<std::string> key_hash;
-        std::size_t h = key_hash(key);
-        return partitions[h % partitions->size()];
+        auto hash_value = std::hash<sstring>()(key);
+        return partitions[hash_value % partitions->size()];
     }
     else {
         return partitions[(counter++) % partitions->size()];

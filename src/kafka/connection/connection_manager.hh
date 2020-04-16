@@ -34,28 +34,28 @@ namespace kafka {
 
 struct metadata_refresh_exception : public std::runtime_error {
 public:
-    explicit metadata_refresh_exception(const std::string& message) : runtime_error(message) {}
+    explicit metadata_refresh_exception(const seastar::sstring& message) : runtime_error(message) {}
 };
 
 class connection_manager {
 public:
 
-    using connection_id = std::pair<std::string, uint16_t>;
+    using connection_id = std::pair<seastar::sstring, uint16_t>;
 
 private:
 
     std::map<connection_id, lw_shared_ptr<kafka_connection>> _connections;
-    std::string _client_id;
+    seastar::sstring _client_id;
 
     semaphore _send_semaphore;
 
     future<> _pending_queue;
 
-    future<lw_shared_ptr<kafka_connection>> connect(const std::string& host, uint16_t port, uint32_t timeout);
+    future<lw_shared_ptr<kafka_connection>> connect(const seastar::sstring& host, uint16_t port, uint32_t timeout);
 
 public:
 
-    explicit connection_manager(std::string client_id)
+    explicit connection_manager(seastar::sstring client_id)
         : _client_id(std::move(client_id)),
         _send_semaphore(1),
         _pending_queue(make_ready_future<>()) {}
@@ -65,7 +65,7 @@ public:
     future<> disconnect(const connection_id& connection);
 
     template<typename RequestType>
-    future<typename RequestType::response_type> send(RequestType request, const std::string& host,
+    future<typename RequestType::response_type> send(RequestType request, const seastar::sstring& host,
             uint16_t port, uint32_t timeout, bool with_response=true) {
         // In order to preserve ordering of sends, a semaphore with
         // count = 1 is used due to its FIFO guarantees.

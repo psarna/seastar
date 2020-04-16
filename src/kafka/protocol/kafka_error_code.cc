@@ -30,7 +30,7 @@ namespace error {
 
 kafka_error_code::kafka_error_code (
     int16_t error_code,
-    std::string error_message,
+    seastar::sstring error_message,
     bool is_retriable,
     bool is_invalid_metadata)
     : _error_code(error_code),

@@ -39,7 +39,7 @@ namespace kafka {
 
 struct parsing_exception : public std::runtime_error {
 public:
-    parsing_exception(const std::string& message) : runtime_error(message) {}
+    parsing_exception(const seastar::sstring& message) : runtime_error(message) {}
 };
 
 template<typename NumberType>
@@ -92,6 +92,10 @@ public:
 
     [[nodiscard]] const error::kafka_error_code& operator*() const noexcept {
         return error::kafka_error_code::get_error(_value);
+    }
+
+    [[nodiscard]] const error::kafka_error_code* operator->() const noexcept {
+        return &error::kafka_error_code::get_error(_value);
     }
 
     kafka_error_code_t& operator=(const error::kafka_error_code& error) noexcept {
@@ -194,26 +198,26 @@ public:
 template<typename SizeType>
 class kafka_buffer_t {
 private:
-    std::string _value;
+    seastar::sstring _value;
 public:
     kafka_buffer_t() noexcept = default;
 
-    explicit kafka_buffer_t(std::string value) : _value(std::move(value)) {}
+    explicit kafka_buffer_t(seastar::sstring value) : _value(std::move(value)) {}
 
-    [[nodiscard]] const std::string& operator*() const noexcept { return _value; }
+    [[nodiscard]] const seastar::sstring& operator*() const noexcept { return _value; }
 
-    [[nodiscard]] std::string& operator*() noexcept { return _value; }
+    [[nodiscard]] seastar::sstring& operator*() noexcept { return _value; }
 
-    [[nodiscard]] const std::string* operator->() const noexcept { return &_value; }
+    [[nodiscard]] const seastar::sstring* operator->() const noexcept { return &_value; }
 
-    [[nodiscard]] std::string* operator->() noexcept { return &_value; }
+    [[nodiscard]] seastar::sstring* operator->() noexcept { return &_value; }
 
-    kafka_buffer_t& operator=(const std::string& value) {
+    kafka_buffer_t& operator=(const seastar::sstring& value) {
         _value = value;
         return *this;
     }
 
-    kafka_buffer_t& operator=(std::string&& value) noexcept {
+    kafka_buffer_t& operator=(seastar::sstring&& value) noexcept {
         _value = std::move(value);
         return *this;
     }
@@ -233,7 +237,7 @@ public:
             throw parsing_exception("Length of buffer is negative");
         }
 
-        std::string value;
+        seastar::sstring value;
         value.resize(*length);
         is.read(value.data(), *length);
 
@@ -247,55 +251,55 @@ public:
 template<typename SizeType>
 class kafka_nullable_buffer_t {
 private:
-    std::string _value;
+    seastar::sstring _value;
     bool _is_null;
 public:
     kafka_nullable_buffer_t() noexcept : _is_null(true) {}
 
-    explicit kafka_nullable_buffer_t(std::string value) : _value(std::move(value)), _is_null(false) {}
+    explicit kafka_nullable_buffer_t(seastar::sstring value) : _value(std::move(value)), _is_null(false) {}
 
     [[nodiscard]] bool is_null() const noexcept { return _is_null; }
 
     void set_null() noexcept {
-        _value.clear();
+        _value.reset();
         _is_null = true;
     }
 
-    [[nodiscard]] const std::string& operator*() const {
+    [[nodiscard]] const seastar::sstring& operator*() const {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return _value;
     }
 
-    [[nodiscard]] std::string& operator*() {
+    [[nodiscard]] seastar::sstring& operator*() {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return _value;
     }
 
-    [[nodiscard]] const std::string* operator->() const {
+    [[nodiscard]] const seastar::sstring* operator->() const {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return &_value;
     }
 
-    [[nodiscard]] std::string* operator->() {
+    [[nodiscard]] seastar::sstring* operator->() {
         if (_is_null) {
             throw std::domain_error("Object is null.");
         }
         return &_value;
     }
 
-    kafka_nullable_buffer_t& operator=(const std::string& value) {
+    kafka_nullable_buffer_t& operator=(const seastar::sstring& value) {
         _value = value;
         _is_null = false;
         return *this;
     }
 
-    kafka_nullable_buffer_t& operator=(std::string&& value) noexcept {
+    kafka_nullable_buffer_t& operator=(seastar::sstring&& value) noexcept {
         _value = std::move(value);
         _is_null = false;
         return *this;
@@ -316,7 +320,7 @@ public:
         SizeType length;
         length.deserialize(is, api_version);
         if (*length >= 0) {
-            std::string value;
+            seastar::sstring value;
             // TODO: Max length check
             value.resize(*length);
             is.read(value.data(), *length);

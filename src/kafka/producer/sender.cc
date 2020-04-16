@@ -37,20 +37,20 @@ sender::sender(connection_manager& connection_manager,
             _connection_timeout(connection_timeout),
             _acks(acks) {}
 
-std::optional<sender::connection_id> sender::broker_for_topic_partition(const std::string& topic, int32_t partition_index) {
+std::optional<sender::connection_id> sender::broker_for_topic_partition(const seastar::sstring& topic, int32_t partition_index) {
     auto metadata = _metadata_manager.get_metadata();
 
-    auto topic_candidate = std::lower_bound((*metadata._topics).begin(), (*metadata._topics).end(), topic, [] (auto& a, auto& b) {
+    auto topic_candidate = std::lower_bound(metadata._topics->begin(), metadata._topics->end(), topic, [](auto& a, auto& b) {
         return *a._name < b;
     });
 
-    if (*(*topic_candidate)._name == topic && (*topic_candidate)._error_code == error::kafka_error_code::NONE) {
-        auto it = std::lower_bound((*(*topic_candidate)._partitions).begin(), (*(*topic_candidate)._partitions).end(), partition_index, [] (auto& a, auto& b) {
+    if (topic_candidate != metadata._topics->end() && *topic_candidate->_name == topic && topic_candidate->_error_code == error::kafka_error_code::NONE) {
+        auto it = std::lower_bound(topic_candidate->_partitions->begin(), topic_candidate->_partitions->end(), partition_index, [](auto& a, auto& b) {
             return *a._partition_index < b;
         });
 
-        if (*(*it)._partition_index == partition_index && (*it)._error_code == error::kafka_error_code::NONE) {
-            return broker_for_id(*(*it)._leader_id);
+        if (it != topic_candidate->_partitions->end() && *it->_partition_index == partition_index && it->_error_code == error::kafka_error_code::NONE) {
+            return broker_for_id(*it->_leader_id);
         }
     }
 
@@ -59,12 +59,12 @@ std::optional<sender::connection_id> sender::broker_for_topic_partition(const st
 
 sender::connection_id sender::broker_for_id(int32_t id) {
     auto metadata = _metadata_manager.get_metadata();
-    auto it = std::lower_bound((*metadata._brokers).begin(), (*metadata._brokers).end(), id, [] (auto& a, auto& b) {
+    auto it = std::lower_bound(metadata._brokers->begin(), metadata._brokers->end(), id, [] (auto& a, auto& b) {
         return *a._node_id < b;
     });
 
-    if (*(*it)._node_id == id) {
-        return {*(*it)._host, *(*it)._port};
+    if (*it->_node_id == id) {
+        return {*it->_host, *it->_port};
     }
 
     return {};
@@ -175,14 +175,14 @@ void sender::set_success_for_broker(const sender::connection_id& broker) {
     }
 }
 
-void sender::set_error_code_for_topic_partition(const std::string& topic, int32_t partition_index,
+void sender::set_error_code_for_topic_partition(const seastar::sstring& topic, int32_t partition_index,
         const error::kafka_error_code& error_code) {
     for (auto& message : _messages_split_by_topic_partition[{topic, partition_index}]) {
         message->_error_code = error_code;
     }
 }
 
-void sender::set_success_for_topic_partition(const std::string& topic, int32_t partition_index) {
+void sender::set_success_for_topic_partition(const seastar::sstring& topic, int32_t partition_index) {
     for (auto& message : _messages_split_by_topic_partition[{topic, partition_index}]) {
         message->_error_code = error::kafka_error_code::NONE;
         message->_promise.set_value();
@@ -220,7 +220,7 @@ future<> sender::receive_responses() {
 future<> sender::process_messages_errors() {
     auto should_refresh_metadata = false;
     for (auto& message : _messages) {
-        if ((*message._error_code)._is_invalid_metadata) {
+        if (message._error_code->_is_invalid_metadata) {
             should_refresh_metadata = true;
             break;
         }
@@ -237,8 +237,8 @@ void sender::filter_messages() {
         if (message._error_code == error::kafka_error_code::NONE) {
             return true;
         }
-        if (!(*message._error_code)._is_retriable) {
-            message._promise.set_exception(send_exception((*message._error_code)._error_message));
+        if (!message._error_code->_is_retriable) {
+            message._promise.set_exception(send_exception(message._error_code->_error_message));
             return true;
         }
         return false;
@@ -272,7 +272,7 @@ void sender::set_error_codes_for_responses(std::vector<future<std::pair<connecti
 
 void sender::close() {
     for (auto& message : _messages) {
-        message._promise.set_exception(send_exception((*message._error_code)._error_message));
+        message._promise.set_exception(send_exception(message._error_code->_error_message));
     }
     _messages.clear();
 }

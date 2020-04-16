@@ -26,8 +26,8 @@ namespace seastar {
 
 namespace kafka {
 
-future<lw_shared_ptr<kafka_connection>> kafka_connection::connect(const std::string& host, uint16_t port,
-        const std::string& client_id, uint32_t timeout_ms) {
+future<lw_shared_ptr<kafka_connection>> kafka_connection::connect(const seastar::sstring& host, uint16_t port,
+        const seastar::sstring& client_id, uint32_t timeout_ms) {
     return tcp_connection::connect(host, port, timeout_ms)
     .then([client_id] (tcp_connection connection) {
         return make_lw_shared<kafka_connection>(std::move(connection), client_id);

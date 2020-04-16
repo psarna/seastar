@@ -30,7 +30,7 @@ namespace kafka {
 
 struct unsupported_version_exception : public std::runtime_error {
 public:
-    unsupported_version_exception(const std::string& message) : runtime_error(message) {}
+    unsupported_version_exception(const seastar::sstring& message) : runtime_error(message) {}
 };
 
 class api_versions_response_key {

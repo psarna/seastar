@@ -30,7 +30,7 @@ static auto timeout_end(uint32_t timeout_ms) {
     return std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
 }
 
-future<tcp_connection> tcp_connection::connect(const std::string& host, uint16_t port,
+future<tcp_connection> tcp_connection::connect(const seastar::sstring& host, uint16_t port,
         uint32_t timeout_ms) {
     net::inet_address target_host = net::inet_address{host};
     sa_family_t family = target_host.is_ipv4() ? sa_family_t(AF_INET) : sa_family_t(AF_INET6);

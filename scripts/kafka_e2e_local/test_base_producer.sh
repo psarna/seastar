@@ -109,9 +109,10 @@ function end_test() {
     tput sgr0
 
     tput setaf 4
-    echo "Waiting 5s for processes to wind up."
+    echo "Waiting 10s for processes to wind up."
     tput sgr0
 
+    sleep 5s
     echo "q" | nc localhost 7777
     sleep 5s
 

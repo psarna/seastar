@@ -39,16 +39,16 @@ namespace kafka {
 
 struct send_exception : public std::runtime_error {
 public:
-    explicit send_exception(const std::string& message) : runtime_error(message) {}
+    explicit send_exception(const seastar::sstring& message) : runtime_error(message) {}
 };
 
 struct sender_message {
-    std::string _key;
-    std::string _value;
+    seastar::sstring _key;
+    seastar::sstring _value;
 
     std::chrono::time_point<std::chrono::system_clock> _timestamp;
 
-    std::string _topic;
+    seastar::sstring _topic;
     int32_t _partition_index;
 
     kafka_error_code_t _error_code;
@@ -61,19 +61,23 @@ struct sender_message {
     sender_message(sender_message&& s) = default;
     sender_message& operator=(sender_message&& s) = default;
     sender_message(sender_message& s) = delete;
+
+    size_t size() const noexcept {
+        return _key.size() + _value.size();
+    }
 };
 
 class sender {
 public:
-    using connection_id = std::pair<std::string, uint16_t>;
-    using topic_partition = std::pair<std::string, int32_t>;
+    using connection_id = std::pair<seastar::sstring, uint16_t>;
+    using topic_partition = std::pair<seastar::sstring, int32_t>;
 
 private:
     connection_manager& _connection_manager;
     metadata_manager& _metadata_manager;
     std::vector<sender_message> _messages;
 
-    std::map<connection_id, std::map<std::string, std::map<int32_t, std::vector<sender_message*>>>> _messages_split_by_broker_topic_partition;
+    std::map<connection_id, std::map<seastar::sstring, std::map<int32_t, std::vector<sender_message*>>>> _messages_split_by_broker_topic_partition;
     std::map<topic_partition, std::vector<sender_message*>> _messages_split_by_topic_partition;
     std::vector<future<std::pair<connection_id, produce_response>>> _responses;
 
@@ -81,14 +85,14 @@ private:
 
     ack_policy _acks;
 
-    std::optional<connection_id> broker_for_topic_partition(const std::string& topic, int32_t partition_index);
+    std::optional<connection_id> broker_for_topic_partition(const seastar::sstring& topic, int32_t partition_index);
     connection_id broker_for_id(int32_t id);
 
     void set_error_code_for_broker(const connection_id& broker, const error::kafka_error_code& error_code);
     void set_success_for_broker(const connection_id& broker);
-    void set_error_code_for_topic_partition(const std::string& topic, int32_t partition_index,
+    void set_error_code_for_topic_partition(const seastar::sstring& topic, int32_t partition_index,
             const error::kafka_error_code& error_code);
-    void set_success_for_topic_partition(const std::string& topic, int32_t partition_index);
+    void set_success_for_topic_partition(const seastar::sstring& topic, int32_t partition_index);
 
     void split_messages();
     void queue_requests();

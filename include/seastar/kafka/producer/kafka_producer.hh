@@ -47,7 +47,7 @@ class kafka_producer final {
 public:
     explicit kafka_producer(producer_properties&& properties);
     seastar::future<> init();
-    seastar::future<> produce(std::string topic_name, std::string key, std::string value);
+    seastar::future<> produce(seastar::sstring topic_name, seastar::sstring key, seastar::sstring value);
     seastar::future<> flush();
     seastar::future<> disconnect();
 

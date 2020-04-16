@@ -21,23 +21,31 @@
  */
 
 #include "batcher.hh"
+#include <seastar/core/sleep.hh>
 
 namespace seastar {
 
 namespace kafka {
 
 void batcher::queue_message(sender_message message) {
+    _messages_byte_size += message.size();
     _messages.emplace_back(std::move(message));
+    if (_expiration_time == 0 || _messages_byte_size > _buffer_memory) {
+        (void) flush();
+    }
 }
 
-future<> batcher::flush(uint32_t connection_timeout) {
-    return do_with(sender(_connection_manager, _metadata_manager, connection_timeout, _acks), [this](sender& sender) {
+future<> batcher::flush() {
+    return do_with(sender(_connection_manager, _metadata_manager, _request_timeout, _acks), [this](sender& sender) {
         bool is_batch_loaded = false;
         return _retry_helper.with_retry([this, &sender, is_batch_loaded]() mutable {
             // It is important to move messages from current batch
             // into sender and send requests in the same continuation,
             // in order to preserve correct order of messages.
             if (!is_batch_loaded) {
+                for (auto& message : _messages) {
+                    _messages_byte_size -= message.size();
+                }
                 sender.move_messages(_messages);
                 is_batch_loaded = true;
             }
@@ -50,6 +58,43 @@ future<> batcher::flush(uint32_t connection_timeout) {
             return sender.close();
         });
     });
+}
+
+future<> batcher::flush_coroutine(std::chrono::milliseconds dur) {
+    return seastar::do_until([this] { return !_keep_refreshing; }, [this, dur]{
+        return seastar::sleep_abortable(dur, _stop_refresh).then([this] {
+            return flush();
+        }).handle_exception([] (std::exception_ptr ep) {
+            try {
+                std::rethrow_exception(ep);
+            } catch (seastar::sleep_aborted& e) {
+                return make_ready_future();
+            } catch (...) {
+                // no other exception should happen here,
+                // if they do, they have to be handled individually
+                std::rethrow_exception(ep);
+            }
+        });
+    }).then([this]{
+        _refresh_finished.signal();
+    });
+}
+
+void batcher::start_flush() {
+    if (_expiration_time == 0) {
+        return;
+    }
+    _keep_refreshing = true;
+    (void) flush_coroutine(std::chrono::milliseconds(_expiration_time));
+}
+
+future<> batcher::stop_flush() {
+    if (_expiration_time == 0) {
+        return make_ready_future();
+    }
+    _keep_refreshing = false;
+    _stop_refresh.request_abort();
+    return _refresh_finished.wait(1);
 }
 
 }
