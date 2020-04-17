@@ -111,7 +111,7 @@ class kafka_connection final {
     future<> init();
 
 public:
-    static future<lw_shared_ptr<kafka_connection>> connect(const seastar::sstring& host, uint16_t port,
+    static future<std::unique_ptr<kafka_connection>> connect(const seastar::sstring& host, uint16_t port,
             const seastar::sstring& client_id, uint32_t timeout_ms);
 
     kafka_connection(tcp_connection connection, seastar::sstring client_id) :

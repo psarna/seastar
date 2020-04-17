@@ -41,17 +41,18 @@ class connection_manager {
 public:
 
     using connection_id = std::pair<seastar::sstring, uint16_t>;
+    using connection_iterator = std::map<connection_id, std::unique_ptr<kafka_connection>>::iterator;
 
 private:
 
-    std::map<connection_id, lw_shared_ptr<kafka_connection>> _connections;
+    std::map<connection_id, std::unique_ptr<kafka_connection>> _connections;
     seastar::sstring _client_id;
 
     semaphore _send_semaphore;
 
     future<> _pending_queue;
 
-    future<lw_shared_ptr<kafka_connection>> connect(const seastar::sstring& host, uint16_t port, uint32_t timeout);
+    future<connection_iterator> connect(const seastar::sstring& host, uint16_t port, uint32_t timeout);
 
 public:
 
@@ -61,7 +62,7 @@ public:
         _pending_queue(make_ready_future<>()) {}
 
     future<> init(const std::set<connection_id>& servers, uint32_t request_timeout);
-    lw_shared_ptr<kafka_connection> get_connection(const connection_id& connection);
+    connection_iterator get_connection(const connection_id& connection);
     future<> disconnect(const connection_id& connection);
 
     template<typename RequestType>
@@ -86,16 +87,40 @@ public:
         // (only 1 at the time) and waiting for result outside it.
         return with_semaphore(_send_semaphore, 1, [this, request = std::move(request), host, port, timeout, with_response] {
             auto conn = get_connection({host, port});
-            if (conn.get() != nullptr) {
+            if (conn != _connections.end()) {
                 auto send_future = with_response
-                        ? conn->send(std::move(request)).finally([conn]{})
-                        : conn->send_without_response(std::move(request)).finally([conn]{});
+                        ? conn->second->send(std::move(request))
+                        : conn->second->send_without_response(std::move(request));
+
+                promise<> promise;
+                auto f = promise.get_future();
+                _pending_queue = _pending_queue.discard_result().then([f = std::move(f)] () mutable {
+                    return std::move(f);
+                });
+
+                send_future = send_future.then([promise = std::move(promise)] (auto response) mutable {
+                    promise.set_value();
+                    return response;
+                });
+
                 return make_ready_future<decltype(send_future)>(std::move(send_future));
             } else {
-                return connect(host, port, timeout).then([request = std::move(request), with_response](auto conn) {
+                return connect(host, port, timeout).then([this, request = std::move(request), with_response](connection_iterator conn) {
                     auto send_future = with_response
-                                       ? conn->send(std::move(request)).finally([conn]{})
-                                       : conn->send_without_response(std::move(request)).finally([conn]{});
+                                       ? conn->second->send(std::move(request)).finally([conn]{})
+                                       : conn->second->send_without_response(std::move(request)).finally([conn]{});
+
+                    promise<> promise;
+                    auto f = promise.get_future();
+                    _pending_queue = _pending_queue.discard_result().then([f = std::move(f)] () mutable {
+                        return std::move(f);
+                    });
+
+                    send_future = send_future.then([promise = std::move(promise)] (auto response) mutable {
+                        promise.set_value();
+                        return response;
+                    });
+
                     return make_ready_future<decltype(send_future)>(std::move(send_future));
                 });
             }

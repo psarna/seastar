@@ -26,14 +26,14 @@ namespace seastar {
 
 namespace kafka {
 
-future<lw_shared_ptr<kafka_connection>> kafka_connection::connect(const seastar::sstring& host, uint16_t port,
+future<std::unique_ptr<kafka_connection>> kafka_connection::connect(const seastar::sstring& host, uint16_t port,
         const seastar::sstring& client_id, uint32_t timeout_ms) {
     return tcp_connection::connect(host, port, timeout_ms)
     .then([client_id] (tcp_connection connection) {
-        return make_lw_shared<kafka_connection>(std::move(connection), client_id);
-    }).then([] (lw_shared_ptr<kafka_connection> connection) {
-        return connection->init().then([connection] {
-            return connection;
+        return std::make_unique<kafka_connection>(std::move(connection), client_id);
+    }).then([] (std::unique_ptr<kafka_connection> connection) {
+        return connection->init().then([connection = std::move(connection)] () mutable {
+            return std::move(connection);
         });
     });
 }

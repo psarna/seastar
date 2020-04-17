@@ -30,14 +30,13 @@ namespace seastar {
 
 namespace kafka {
 
-future<lw_shared_ptr<kafka_connection>> connection_manager::connect(const seastar::sstring& host, uint16_t port, uint32_t timeout) {
+future<connection_manager::connection_iterator> connection_manager::connect(const seastar::sstring& host, uint16_t port, uint32_t timeout) {
     auto conn = _connections.find({host, port});
     return conn != _connections.end()
-       ? make_ready_future<lw_shared_ptr<kafka_connection>>(conn->second)
+       ? make_ready_future<connection_manager::connection_iterator>(conn)
        : kafka_connection::connect(host, port, _client_id, timeout)
-       .then([this, host, port] (lw_shared_ptr<kafka_connection> conn) {
-            _connections.insert({{host, port}, conn});
-            return conn;
+       .then([this, host, port] (std::unique_ptr<kafka_connection> conn) {
+            return make_ready_future<connection_manager::connection_iterator>(_connections.emplace(std::make_pair<>(host, port), std::move(conn)).first);
         });
 }
 
@@ -53,17 +52,16 @@ future<> connection_manager::init(const std::set<connection_id>& servers, uint32
     return when_all_succeed(fs.begin(), fs.end()).discard_result();
 }
 
-lw_shared_ptr<kafka_connection> connection_manager::get_connection(const connection_id& connection) {
-    auto conn = _connections.find(connection);
-    return conn != _connections.end() ? conn->second : nullptr;
+connection_manager::connection_iterator connection_manager::get_connection(const connection_id& connection) {
+    return _connections.find(connection);
 }
 
 future<> connection_manager::disconnect(const connection_id& connection) {
     auto conn = _connections.find(connection);
     if (conn != _connections.end()) {
-        auto conn_ptr = conn->second;
+        auto conn_ptr = std::move(conn->second);
         _connections.erase(conn);
-        return conn_ptr->close().finally([conn_ptr]{});
+        return conn_ptr->close().finally([conn_ptr = std::move(conn_ptr)]{});
     }
     return make_ready_future();
 }
