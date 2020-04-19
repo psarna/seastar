@@ -1,0 +1,56 @@
+name: "fs: ci"
+
+on:
+  push:
+    branches: [ zpp_fs ]
+  pull_request:
+    branches: [ zpp_fs, fs-* ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    container: scylladb/seastar-toolchain:latest
+
+    strategy:
+      matrix:
+        mode: [release]
+        dialect: [c++17] # TODO: add c++20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v2
+
+      - name: Set ENV variables
+        shell: bash
+        run: |
+          echo "::set-env name=SEASTAR_FS_TESTS::$(echo tests/unit/fs_*_test.cc | sed 's/\.cc//g')"
+          git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin master
+          echo "::set-env name=MASTER_HASH::$(git rev-parse --short origin/master)"
+
+      - name: Cache build
+        id: cache
+        uses: actions/cache@v1
+        with:
+          path: build/${{ matrix.mode }}
+          key: fs-${{ runner.os }}-${{ matrix.mode }}-${{ env.MASTER_HASH }}
+
+      - name: Change mtime
+        if: steps.cache.outputs.cache-hit == 'true'
+        run: |
+          OLDEST_MTIME=$(find build/${{ matrix.mode }} -type f -printf '%.10T@\n' | sort | head -n 1)
+          export OLDEST_MTIME=$((OLDEST_MTIME-1))
+          find $(ls -1 | grep -v '^build$') -type f -exec touch -c -m -d "@$OLDEST_MTIME" {} \;
+          find $(ls -1 | grep -v '^build$') | grep -P '/fs(/|_)|CMakeLists.txt' | xargs touch -c -m
+
+      - name: Configure
+        run: ./configure.py --mode=${{ matrix.mode }} --c++-dialect ${{ matrix.dialect }} --enable-experimental-fs
+
+      - name: Build
+        run: ninja -C build/${{ matrix.mode }} ${{ env.SEASTAR_FS_TESTS }}
+
+      - name: Tests
+        run: | # TODO: add similar logic to test.py
+          for test in ${{ env.SEASTAR_FS_TESTS }}; do
+          echo -e "\033[1;36m$test\033[m"
+          build/${{ matrix.mode }}/$test
+          done
