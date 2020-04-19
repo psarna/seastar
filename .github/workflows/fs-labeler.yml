@@ -1,0 +1,15 @@
+name: "fs: labeler"
+
+on:
+  pull_request:
+    branches: [ zpp_fs, fs-* ]
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/labeler@v2
+        with:
+          configuration-path: .github/fs-labeler.yml
+          repo-token: "${{ secrets.GITHUB_TOKEN }}"

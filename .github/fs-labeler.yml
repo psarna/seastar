@@ -1,0 +1,18 @@
+build:
+  - ./**/CMakeLists.txt
+
+core:
+  - include/seastar/core/**/*
+  - src/core/**/*
+
+fs:
+  - include/seastar/fs/**/*
+  - src/fs/**/*
+  - tests/**/fs_*_test.cc
+
+util:
+  - include/seastar/util/**/*
+  - src/util/**/*
+
+tests:
+  - tests/**/*
