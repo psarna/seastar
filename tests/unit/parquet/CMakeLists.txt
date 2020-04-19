@@ -46,3 +46,6 @@ seastar_add_test (cql_reader_alltypes
 
 seastar_add_test (column_chunk_writer
   SOURCES column_chunk_writer_test.cc)
+
+seastar_add_test (file_writer
+  SOURCES file_writer_test.cc)
