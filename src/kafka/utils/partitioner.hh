@@ -30,11 +30,9 @@ namespace seastar {
 namespace kafka {
 
 class partitioner {
-
 public:
-
     virtual metadata_response_partition get_partition(const seastar::sstring& key, const kafka_array_t<metadata_response_partition>& partitions) = 0;
-
+    virtual ~partitioner() = default;
 };
 
 class basic_partitioner : public partitioner {

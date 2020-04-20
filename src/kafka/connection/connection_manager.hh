@@ -126,10 +126,19 @@ public:
             }
         }).then([](future<typename RequestType::response_type> send_future) {
             return send_future;
+        }).then([this, host, port](typename RequestType::response_type response) {
+            if (response._error_code == error::kafka_error_code::REQUEST_TIMED_OUT ||
+                response._error_code == error::kafka_error_code::CORRUPT_MESSAGE ||
+                response._error_code == error::kafka_error_code::NETWORK_EXCEPTION) {
+                _pending_queue = _pending_queue.discard_result().then([this, host, port] {
+                    return disconnect({host, port});
+                });
+            }
+            return response;
         }).handle_exception([this, host, port] (std::exception_ptr ep) {
             try {
                 _pending_queue = _pending_queue.discard_result().then([this, host, port] {
-                   return disconnect({host, port});
+                    return disconnect({host, port});
                 });
                 std::rethrow_exception(ep);
             } catch (seastar::timed_out_error& e) {

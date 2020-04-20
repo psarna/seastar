@@ -58,6 +58,13 @@ namespace kafka {
                 });
             }
             _metadata = std::move(metadata);
+        }).handle_exception([] (std::exception_ptr ep) {
+            try {
+                std::rethrow_exception(ep);
+            } catch (metadata_refresh_exception& e) {
+                // Ignore metadata_refresh_exception and preserve the old metadata.
+                return;
+            }
         });
     }
 

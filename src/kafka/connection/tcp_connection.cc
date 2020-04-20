@@ -66,7 +66,10 @@ future<> tcp_connection::write(temporary_buffer<char> buff) {
 }
 
 future<> tcp_connection::close() {
-    return when_all(_read_buf.close(), _write_buf.close()).discard_result();
+    return when_all_succeed(_read_buf.close(), _write_buf.close())
+    .discard_result().handle_exception([](std::exception_ptr ep) {
+        // Ignore close exceptions.
+    });
 }
 
 }

@@ -150,6 +150,8 @@ public:
         auto request_future = with_semaphore(_send_semaphore, 1,
         [this, serialized_message = std::move(serialized_message)]() mutable {
             return send_request(std::move(serialized_message));
+        }).handle_exception([] (std::exception_ptr ep) {
+            // Ignore exception as it will be handled in response_future
         });
         auto response_future = with_semaphore(_receive_semaphore, 1, [this, correlation_id, api_version] {
             return receive_response<RequestType>(correlation_id, api_version);
