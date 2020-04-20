@@ -1,3 +1,6 @@
 [submodule "dpdk"]
 	path = dpdk
 	url = ../dpdk
+[submodule "tests/unit/parquet/test_data/parquet-testing"]
+	path = tests/unit/parquet/test_data/parquet-testing
+	url = https://github.com/apache/parquet-testing
