@@ -574,6 +574,27 @@ add_library (seastar STATIC
   src/http/transformers.cc
   src/json/formatter.cc
   src/json/json_elements.cc
+  src/kafka/protocol/kafka_error_code.hh
+  src/kafka/protocol/kafka_error_code.cc
+  src/kafka/connection/connection_manager.cc
+  src/kafka/connection/kafka_connection.cc
+  src/kafka/connection/tcp_connection.hh
+  src/kafka/connection/tcp_connection.cc
+  src/kafka/protocol/api_versions_response.cc
+  src/kafka/protocol/api_versions_request.cc
+  src/kafka/protocol/headers.cc
+  src/kafka/protocol/kafka_records.cc
+  src/kafka/protocol/metadata_response.cc
+  src/kafka/protocol/metadata_request.cc
+  src/kafka/protocol/produce_response.cc
+  src/kafka/protocol/produce_request.cc
+  src/kafka/producer/batcher.cc
+  src/kafka/producer/metadata_manager.hh
+  src/kafka/producer/metadata_manager.cc
+  src/kafka/producer/kafka_producer.cc
+  src/kafka/producer/sender.cc
+  src/kafka/utils/partitioner.cc
+  src/kafka/utils/defaults.cc
   src/net/arp.cc
   src/net/config.cc
   src/net/dhcp.cc
