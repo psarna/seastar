@@ -666,10 +666,10 @@ if (Seastar_EXPERIMENTAL_PARQUET)
     include/seastar/parquet/bpacking.hh
     include/seastar/parquet/column_chunk_reader.hh
     include/seastar/parquet/compression.hh
+    include/seastar/parquet/cql_reader.hh
     include/seastar/parquet/encoding.hh
     include/seastar/parquet/exception.hh
     include/seastar/parquet/thrift_serdes.hh
-    include/seastar/parquet/column_chunk_reader.hh
     include/seastar/parquet/file_reader.hh
     include/seastar/parquet/logical_type.hh
     include/seastar/parquet/overloaded.hh
@@ -679,6 +679,7 @@ if (Seastar_EXPERIMENTAL_PARQUET)
     include/seastar/parquet/reader_schema.hh
     src/parquet/column_chunk_reader.cc
     src/parquet/compression.cc
+    src/parquet/cql_reader.cc
     src/parquet/encoding.cc
     src/parquet/thrift_serdes.cc
     src/parquet/file_reader.cc
