@@ -664,10 +664,12 @@ if (Seastar_EXPERIMENTAL_PARQUET)
     include/seastar/parquet/bit_stream_utils.hh
     include/seastar/parquet/bytes.hh
     include/seastar/parquet/bpacking.hh
+    include/seastar/parquet/compression.hh
     include/seastar/parquet/exception.hh
     include/seastar/parquet/overloaded.hh
     include/seastar/parquet/parquet_types.h
     include/seastar/parquet/rle_encoding.hh
+    src/parquet/compression.cc
     src/parquet/parquet_types.cpp
   )
 endif()
@@ -738,7 +740,9 @@ endif ()
 if (Seastar_EXPERIMENTAL_PARQUET)
   target_link_libraries (seastar
     PUBLIC
-      Thrift::thrift)
+      Thrift::thrift
+      Snappy::snappy
+      ZLIB::ZLIB)
 endif()
 
 #

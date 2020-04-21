@@ -77,7 +77,9 @@ macro (seastar_find_dependencies)
 
   if (Seastar_EXPERIMENTAL_PARQUET)
     list(APPEND _seastar_all_dependencies
-      Thrift)
+      Thrift
+      Snappy
+      ZLIB)
   endif()
 
   # Arguments to `find_package` for each 3rd-party dependency.
