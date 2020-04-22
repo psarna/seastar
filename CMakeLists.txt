@@ -664,6 +664,7 @@ if (Seastar_EXPERIMENTAL_PARQUET)
     include/seastar/parquet/bit_stream_utils.hh
     include/seastar/parquet/bytes.hh
     include/seastar/parquet/bpacking.hh
+    include/seastar/parquet/overloaded.hh
     include/seastar/parquet/parquet_types.h
     include/seastar/parquet/rle_encoding.hh
     src/parquet/parquet_types.cpp
