@@ -666,10 +666,12 @@ if (Seastar_EXPERIMENTAL_PARQUET)
     include/seastar/parquet/bpacking.hh
     include/seastar/parquet/compression.hh
     include/seastar/parquet/exception.hh
+    include/seastar/parquet/thrift_serdes.hh
     include/seastar/parquet/overloaded.hh
     include/seastar/parquet/parquet_types.h
     include/seastar/parquet/rle_encoding.hh
     src/parquet/compression.cc
+    src/parquet/thrift_serdes.cc
     src/parquet/parquet_types.cpp
   )
 endif()

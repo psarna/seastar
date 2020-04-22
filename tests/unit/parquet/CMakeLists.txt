@@ -27,3 +27,7 @@ seastar_add_test (compression
 seastar_add_test (rle_encoding
   KIND BOOST
   SOURCES rle_encoding_test.cc)
+
+seastar_add_test (thrift_serdes_test
+  KIND BOOST
+  SOURCES thrift_serdes_test.cc)
