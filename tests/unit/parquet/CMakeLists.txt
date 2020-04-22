@@ -28,6 +28,10 @@ seastar_add_test (rle_encoding
   KIND BOOST
   SOURCES rle_encoding_test.cc)
 
+seastar_add_test (dictionary_encoder_test.cc
+  KIND BOOST
+  SOURCES dictionary_encoder_test.cc)
+
 seastar_add_test (thrift_serdes_test
   KIND BOOST
   SOURCES thrift_serdes_test.cc)
