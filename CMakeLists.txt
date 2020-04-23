@@ -673,12 +673,14 @@ if (Seastar_EXPERIMENTAL_PARQUET)
     include/seastar/parquet/overloaded.hh
     include/seastar/parquet/parquet_types.h
     include/seastar/parquet/rle_encoding.hh
+    include/seastar/parquet/reader_schema.hh
     src/parquet/compression.cc
     src/parquet/column_chunk_reader.cc
     src/parquet/encoding.cc
     src/parquet/thrift_serdes.cc
     src/parquet/logical_type.cc
     src/parquet/parquet_types.cpp
+    src/parquet/reader_schema.cc
   )
 endif()
 
