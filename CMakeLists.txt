@@ -678,6 +678,7 @@ if (Seastar_EXPERIMENTAL_PARQUET)
     include/seastar/parquet/reader_schema.hh
     include/seastar/parquet/record_reader.hh
     include/seastar/parquet/rle_encoding.hh
+    include/seastar/parquet/writer_schema.hh
     src/parquet/column_chunk_reader.cc
     src/parquet/compression.cc
     src/parquet/cql_reader.cc
@@ -688,6 +689,7 @@ if (Seastar_EXPERIMENTAL_PARQUET)
     src/parquet/parquet_types.cpp
     src/parquet/reader_schema.cc
     src/parquet/record_reader.cc
+    src/parquet/writer_schema.cc
   )
 endif()
 
