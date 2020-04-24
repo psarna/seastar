@@ -39,13 +39,13 @@ SEASTAR_THREAD_TEST_CASE(parallel_read_write_test) {
     auto f = fs::open_file_dma(tf.path(), open_flags::rw).get0();
     static auto alignment = f.memory_dma_alignment();
 
-    parallel_for_each(boost::irange<off_t>(0, device_size / alignment), [&f](auto i) {
+    parallel_for_each(boost::irange<off_t>(0, device_size / alignment), [&f](off_t i) {
         auto wbuf = allocate_aligned_buffer<unsigned char>(alignment, alignment);
         std::fill(wbuf.get(), wbuf.get() + alignment, i);
         auto wb = wbuf.get();
 
         return f.dma_write(i * alignment, wb, alignment).then(
-            [&f, i, wbuf = std::move(wbuf)](auto ret) mutable {
+            [&f, i, wbuf = std::move(wbuf)](size_t ret) mutable {
                 BOOST_REQUIRE_EQUAL(ret, alignment);
                 auto rbuf = allocate_aligned_buffer<unsigned char>(alignment, alignment);
                 auto rb = rbuf.get();
@@ -55,8 +55,8 @@ SEASTAR_THREAD_TEST_CASE(parallel_read_write_test) {
                         BOOST_REQUIRE(std::equal(rbuf.get(), rbuf.get() + alignment, wbuf.get()));
                     });
             });
-    }).wait();
+    }).get();
 
-    f.flush().wait();
-    f.close().wait();
+    f.flush().get();
+    f.close().get();
 }
