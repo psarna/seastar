@@ -20,6 +20,7 @@
  */
 
 #include "fs/bitwise.hh"
+#include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
 #include "fs/metadata_log_bootstrap.hh"
 #include "seastar/util/log.hh"
@@ -511,22 +512,29 @@ future<> metadata_log_bootstrap::bootstrap_delete_inode_and_dir_entry() {
         return invalid_entry_exception();
     }
 
-    _metadata_log.memory_only_delete_dir_entry(dir, std::move(dir_entry_name));
-    // TODO: Maybe mtime_ns for modifying directory?
-
-    // TODO: there is so much copy & paste here...
-    // TODO: maybe to make ondisk_delete_inode_and_dir_entry_header have ondisk_delete_inode and
-    //       ondisk_delete_dir_entry_header to ease deduplicating code?
     inode_info& inode_to_delete_info = _metadata_log._inodes.at(entry.inode_to_delete);
-    if (inode_to_delete_info.directories_containing_file > 0) {
+    // We have 2 cases:
+    // - deleting dir entry and inode that it points to
+    // - deleting dir entry and inode that are unrelated
+    // Third case: deleting dir entry and inode of this dir is not possible as we do not permit unlinked directories
+    if (inode_to_delete_info.directories_containing_file > (it->second == entry.inode_to_delete)) {
         return invalid_entry_exception(); // Only unlinked inodes may be deleted
     }
-
     if (inode_to_delete_info.is_directory() and not inode_to_delete_info.get_directory().entries.empty()) {
         return invalid_entry_exception(); // Only empty directories may be deleted
     }
 
+    // TODO: there is so much copy & paste above...
+    // TODO: maybe to make ondisk_delete_inode_and_dir_entry_header have ondisk_delete_inode and
+    //       ondisk_delete_dir_entry_header to ease deduplicating code?
+    // TODO: ^ because some check above are different it may be hard here, but in other places should be fine, also
+    // instead of calling bootstrap_delete_dir_entry() and then bootstrap_delete_inode() we could export
+    // some (preferably all) correctness checking logic to separate functions that would allow as to reuse them, thus
+    // reducing duplication to minimum
+
+    _metadata_log.memory_only_delete_dir_entry(dir, std::move(dir_entry_name));
     _metadata_log.memory_only_delete_inode(entry.inode_to_delete);
+    // TODO: Maybe mtime_ns for modifying directory?
     return now();
 }
 
