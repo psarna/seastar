@@ -16,22 +16,49 @@
  * under the License.
  */
 /*
- * Copyright (C) 2019 ScyllaDB
+ * Copyright (C) 2020 ScyllaDB
  */
 
 #define BOOST_TEST_MODULE fs
 
+#include "fs/cluster.hh"
 #include "fs/cluster_allocator.hh"
+#include "seastar/core/circular_buffer.hh"
 
-#include <boost/test/included/unit_test.hpp>
-#include <deque>
+#include <random>
 #include <seastar/core/units.hh>
+#include <boost/test/included/unit_test.hpp>
 #include <unordered_set>
 
 using namespace seastar;
+using namespace seastar::fs;
+
+namespace {
+
+// Check if a is subset of b
+bool is_buff_subset(circular_buffer<cluster_id_t> a, circular_buffer<cluster_id_t> b) {
+    if (a.size() > b.size()) {
+        return false;
+    }
+    std::sort(a.begin(), a.end());
+    std::sort(b.begin(), b.end());
+    return std::includes(b.begin(), b.end(), a.begin(), a.end());
+}
+
+circular_buffer<cluster_id_t> copy_buff(const circular_buffer<cluster_id_t>& circ) {
+    circular_buffer<cluster_id_t> ret;
+    for (auto& elem : circ) {
+        ret.emplace_back(elem);
+    }
+    return ret;
+}
+
+} // namespace
 
 BOOST_AUTO_TEST_CASE(test_cluster_0) {
-    fs::cluster_allocator ca({}, {0});
+    circular_buffer<cluster_id_t> tmp_buff;
+    tmp_buff.emplace_back(0);
+    cluster_allocator ca({}, std::move(tmp_buff));
     BOOST_REQUIRE_EQUAL(ca.alloc().value(), 0);
     BOOST_REQUIRE(ca.alloc() == std::nullopt);
     BOOST_REQUIRE(ca.alloc() == std::nullopt);
@@ -42,74 +69,94 @@ BOOST_AUTO_TEST_CASE(test_cluster_0) {
 }
 
 BOOST_AUTO_TEST_CASE(test_empty) {
-    fs::cluster_allocator empty_ca{{}, {}};
+    cluster_allocator empty_ca({}, {});
     BOOST_REQUIRE(empty_ca.alloc() == std::nullopt);
 }
 
 BOOST_AUTO_TEST_CASE(test_small) {
-    std::deque<fs::cluster_id_t> deq{1, 5, 3, 4, 2};
-    fs::cluster_allocator small_ca({}, deq);
-    BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[0]);
-    BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[1]);
-    BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[2]);
-    BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[3]);
+    constexpr cluster_id_t cluster_nb = 5;
+    circular_buffer<cluster_id_t> buff;
+    for (cluster_id_t i = 0; i < cluster_nb; i++) {
+        buff.emplace_back(i);
+    }
 
-    small_ca.free(deq[2]);
-    small_ca.free(deq[1]);
-    small_ca.free(deq[3]);
-    small_ca.free(deq[0]);
-    BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[4]);
-    BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[2]);
-    BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[1]);
-    BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[3]);
-    BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[0]);
+    cluster_allocator small_ca({}, copy_buff(buff));
+
+    circular_buffer<cluster_id_t> tmp_buff;
+    for (size_t i = 0; i < buff.size() - 1; ++i) {
+        tmp_buff.emplace_back(small_ca.alloc().value());
+    }
+
+    BOOST_REQUIRE(is_buff_subset(copy_buff(tmp_buff), copy_buff(buff)));
+
+    for (size_t i = 0; i < buff.size() - 1; ++i) {
+        small_ca.free(tmp_buff[i]);
+    }
+    tmp_buff.clear();
+    for (size_t i = 0; i < buff.size(); ++i) {
+        tmp_buff.emplace_back(small_ca.alloc().value());
+    }
+    BOOST_REQUIRE(is_buff_subset(copy_buff(tmp_buff), copy_buff(buff)));
     BOOST_REQUIRE(small_ca.alloc() == std::nullopt);
-
-    small_ca.free(deq[2]);
-    small_ca.free(deq[4]);
-    small_ca.free(deq[3]);
-    BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[2]);
-    BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[4]);
-    small_ca.free(deq[2]);
-    BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[3]);
-    small_ca.free(deq[4]);
-    BOOST_REQUIRE_EQUAL(small_ca.alloc().value(), deq[2]);
 }
 
 BOOST_AUTO_TEST_CASE(test_max) {
-    constexpr fs::cluster_id_t clusters_per_shard = 1024;
-    std::deque<fs::cluster_id_t> deq;
-    for (fs::cluster_id_t i = 0; i < clusters_per_shard; i++) {
-        deq.emplace_back(i);
+    constexpr cluster_id_t cluster_nb = 1024;
+
+    circular_buffer<cluster_id_t> buff;
+    for (cluster_id_t i = 0; i < cluster_nb; i++) {
+        buff.emplace_back(i);
     }
-    fs::cluster_allocator ordinary_ca({}, deq);
-    for (fs::cluster_id_t i = 0; i < clusters_per_shard; i++) {
-        BOOST_REQUIRE_EQUAL(ordinary_ca.alloc().value(), i);
+    cluster_allocator ordinary_ca({}, copy_buff(buff));
+
+    circular_buffer<cluster_id_t> tmp_buff;
+    for (cluster_id_t i = 0; i < cluster_nb; i++) {
+        auto cluster_id = ordinary_ca.alloc();
+        BOOST_REQUIRE(cluster_id != std::nullopt);
+        tmp_buff.emplace_back(cluster_id.value());
     }
+    BOOST_REQUIRE(is_buff_subset(copy_buff(tmp_buff), copy_buff(buff)));
+
     BOOST_REQUIRE(ordinary_ca.alloc() == std::nullopt);
-    for (fs::cluster_id_t i = 0; i < clusters_per_shard; i++) {
+    for (cluster_id_t i = 0; i < cluster_nb; i++) {
         ordinary_ca.free(i);
     }
 }
 
-BOOST_AUTO_TEST_CASE(test_pseudo_rand) {
-    std::unordered_set<fs::cluster_id_t> uset;
-    std::deque<fs::cluster_id_t> deq;
-    fs::cluster_id_t elem = 215;
-    while (elem != 806) {
-        deq.emplace_back(elem);
-        elem = (elem * 215) % 1021;
+BOOST_AUTO_TEST_CASE(test_random_action) {
+    constexpr cluster_id_t cluster_nb = 8;
+    constexpr size_t repeats = 1000;
+
+    std::default_random_engine random_engine;
+    auto generate_random_value = [&](size_t min, size_t max) {
+        return std::uniform_int_distribution<size_t>(min, max)(random_engine);
+    };
+
+    circular_buffer<cluster_id_t> alloc_vec;
+    std::unordered_set<cluster_id_t> remaining;
+    for (cluster_id_t i = 0; i < cluster_nb; ++i) {
+        alloc_vec.emplace_back(i);
+        remaining.emplace(i);
     }
-    elem = 1;
-    while (elem != 1020) {
-        uset.insert(elem);
-        elem = (elem * 19) % 1021;
-    }
-    fs::cluster_allocator random_ca(uset, deq);
-    elem = 215;
-    while (elem != 1) {
-        BOOST_REQUIRE_EQUAL(random_ca.alloc().value(), elem);
-        random_ca.free(1021-elem);
-        elem = (elem * 215) % 1021;
+    cluster_allocator ca({}, std::move(alloc_vec));
+    alloc_vec.clear();
+
+    for (size_t i = 0; i < repeats; ++i) {
+        if (remaining.size() > 0 && (generate_random_value(0, 1) || alloc_vec.size() == 0)) {
+            auto cluster_id = ca.alloc();
+            BOOST_REQUIRE(cluster_id != std::nullopt);
+
+            auto remaining_it = remaining.find(*cluster_id);
+            BOOST_REQUIRE(remaining_it != remaining.end());
+            alloc_vec.emplace_back(cluster_id.value());
+            remaining.erase(remaining_it);
+        } else {
+            size_t elem_id = generate_random_value(0, alloc_vec.size() - 1);
+            ca.free(alloc_vec[elem_id]);
+            remaining.emplace(alloc_vec[elem_id]);
+
+            std::swap(alloc_vec[elem_id], alloc_vec.back());
+            alloc_vec.pop_back();
+        }
     }
 }
