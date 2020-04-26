@@ -28,6 +28,7 @@
 #include "fs/path.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
+#include "seastar/fs/exceptions.hh"
 
 namespace seastar::fs {
 
@@ -115,6 +116,10 @@ class unlink_or_remove_file_operation {
     }
 
     future<> unlink_or_remove_file_in_directory() {
+        if (_metadata_log._read_only) {
+            return make_exception_future(read_only_filesystem_exception());
+        }
+
         if (not _metadata_log.inode_exists(_dir_inode)) {
             return make_exception_future(operation_became_invalid_exception());
         }

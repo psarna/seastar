@@ -32,6 +32,7 @@
 #include "seastar/core/future.hh"
 #include "seastar/core/shared_ptr.hh"
 #include "seastar/core/temporary_buffer.hh"
+#include "seastar/fs/exceptions.hh"
 
 namespace seastar::fs {
 
@@ -74,6 +75,12 @@ private:
             return repeat([this, &completed_write_len, buffer, write_len, file_offset] {
                 if (completed_write_len == write_len) {
                     return make_ready_future<bool_class<stop_iteration_tag>>(stop_iteration::yes);
+                }
+                // TODO: do we want that check here? we will perform at most one additional disk write in read-only
+                //       state without it because we check if the filesystem is read-only before starting write and
+                //       before append_ondisk_entry() and memory_only_updates()
+                if (_metadata_log._read_only) {
+                    return make_exception_future<bool_class<stop_iteration_tag>>(read_only_filesystem_exception());
                 }
 
                 size_t remaining_write_len = write_len - completed_write_len;
@@ -128,6 +135,10 @@ private:
     }
 
     future<size_t> do_small_write(const uint8_t* buffer, size_t expected_write_len, file_offset_t file_offset) {
+        if (_metadata_log._read_only) {
+            return make_exception_future<size_t>(read_only_filesystem_exception());
+        }
+
         auto curr_time_ns = get_current_time_ns();
         ondisk_small_write_header ondisk_entry {
             _inode,
@@ -160,6 +171,12 @@ private:
             return repeat([this, &completed_write_len, aligned_buffer, expected_write_len, file_offset] {
                 if (completed_write_len == expected_write_len) {
                     return make_ready_future<bool_class<stop_iteration_tag>>(stop_iteration::yes);
+                }
+                // TODO: do we want that check here? we will perform at most one additional disk write in read-only
+                //       state without it because we check if the filesystem is read-only before starting write and
+                //       before append_ondisk_entry() and memory_only_updates()
+                if (_metadata_log._read_only) {
+                    return make_exception_future<bool_class<stop_iteration_tag>>(read_only_filesystem_exception());
                 }
 
                 size_t remaining_write_len = expected_write_len - completed_write_len;
@@ -226,6 +243,10 @@ private:
         disk_offset_t device_offset = disk_buffer->current_disk_offset();
         return disk_buffer->write(aligned_buffer, aligned_expected_write_len, _metadata_log._device).then(
                 [this, file_offset, disk_buffer = std::move(disk_buffer), device_offset](size_t write_len) {
+            if (_metadata_log._read_only) {
+                return make_exception_future<size_t>(read_only_filesystem_exception());
+            }
+
             // TODO: is this round down necessary?
             // On partial write return aligned write length
             write_len = round_down_to_multiple_of_power_of_2(write_len, _metadata_log._alignment);
@@ -265,6 +286,11 @@ private:
 
         return _metadata_log._device.write(cluster_disk_offset, aligned_buffer, _metadata_log._cluster_size, _pc).then(
                 [this, file_offset, cluster_id, cluster_disk_offset, update_mtime](size_t write_len) {
+            if (_metadata_log._read_only) {
+                _metadata_log._cluster_allocator.free(cluster_id);
+                return make_exception_future<size_t>(read_only_filesystem_exception());
+            }
+
             if (write_len != _metadata_log._cluster_size) {
                 _metadata_log._cluster_allocator.free(cluster_id);
                 return make_ready_future<size_t>(0);

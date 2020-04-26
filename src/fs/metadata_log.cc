@@ -61,6 +61,10 @@
 
 namespace seastar::fs {
 
+namespace {
+logger mlogger("fs_metadata_log");
+} // namespace
+
 metadata_log::metadata_log(block_device device, uint32_t cluster_size, uint32_t alignment,
     shared_ptr<metadata_to_disk_buffer> cluster_buff, shared_ptr<cluster_writer> data_writer)
 : _device(std::move(device))
@@ -87,6 +91,11 @@ future<> metadata_log::shutdown() {
     return flush_log().then([this] {
         return _device.close();
     });
+}
+
+void metadata_log::switch_fs_read_only_mode(bool val) noexcept {
+    mlogger.debug("Turned {} read-only mode.", val ? "on" : "off");
+    _read_only = val;
 }
 
 void metadata_log::write_update(inode_info::file& file, inode_data_vec new_data_vec) {
@@ -266,6 +275,10 @@ metadata_log::flush_result metadata_log::schedule_flush_of_curr_cluster_and_chan
 
 void metadata_log::schedule_attempt_to_delete_inode(inode_t inode) {
     return schedule_background_task([this, inode] {
+        if (_read_only) {
+            return make_exception_future(read_only_filesystem_exception());
+        }
+
         auto it = _inodes.find(inode);
         if (it == _inodes.end() or it->second.is_linked() or it->second.is_open()) {
             return now(); // Scheduled delete became invalid
@@ -415,40 +428,67 @@ stat_data metadata_log::stat(const std::string& path) const {
 }
 
 future<> metadata_log::create_file(std::string path, file_permissions perms) {
+    if (_read_only) {
+        return make_exception_future(read_only_filesystem_exception());
+    }
     return create_file_operation::perform(*this, std::move(path), std::move(perms), create_semantics::CREATE_FILE).discard_result();
 }
 
 future<inode_t> metadata_log::create_and_open_file(std::string path, file_permissions perms) {
+    if (_read_only) {
+        return make_exception_future<inode_t>(read_only_filesystem_exception());
+    }
     return create_file_operation::perform(*this, std::move(path), std::move(perms), create_semantics::CREATE_AND_OPEN_FILE);
 }
 
 future<inode_t> metadata_log::create_and_open_unlinked_file(file_permissions perms) {
+    if (_read_only) {
+        return make_exception_future<inode_t>(read_only_filesystem_exception());
+    }
     return create_and_open_unlinked_file_operation::perform(*this, std::move(perms));
 }
 
 future<> metadata_log::create_directory(std::string path, file_permissions perms) {
+    if (_read_only) {
+        return make_exception_future(read_only_filesystem_exception());
+    }
     return create_file_operation::perform(*this, std::move(path), std::move(perms), create_semantics::CREATE_DIR).discard_result();
 }
 
 future<> metadata_log::link_file(inode_t inode, std::string path) {
+    if (_read_only) {
+        return make_exception_future(read_only_filesystem_exception());
+    }
     return link_file_operation::perform(*this, inode, std::move(path));
 }
 
 future<> metadata_log::link_file(std::string source, std::string destination) {
+    if (_read_only) {
+        return make_exception_future(read_only_filesystem_exception());
+    }
     return path_lookup(std::move(source)).then([this, destination = std::move(destination)](inode_t inode) {
         return link_file(inode, std::move(destination));
     });
 }
 
 future<> metadata_log::unlink_file(std::string path) {
+    if (_read_only) {
+        return make_exception_future(read_only_filesystem_exception());
+    }
     return unlink_or_remove_file_operation::perform(*this, std::move(path), remove_semantics::FILE_ONLY);
 }
 
 future<> metadata_log::remove_directory(std::string path) {
+    if (_read_only) {
+        return make_exception_future(read_only_filesystem_exception());
+    }
     return unlink_or_remove_file_operation::perform(*this, std::move(path), remove_semantics::FILE_OR_DIR);
 }
 
 future<> metadata_log::remove(std::string path) {
+    if (_read_only) {
+        return make_exception_future(read_only_filesystem_exception());
+    }
     return unlink_or_remove_file_operation::perform(*this, std::move(path), remove_semantics::DIR_ONLY);
 }
 
@@ -508,10 +548,16 @@ future<size_t> metadata_log::read(inode_t inode, file_offset_t pos, void* buffer
 
 future<size_t> metadata_log::write(inode_t inode, file_offset_t pos, const void* buffer, size_t len,
         const io_priority_class& pc) {
+    if (_read_only) {
+        return make_exception_future<size_t>(read_only_filesystem_exception());
+    }
     return write_operation::perform(*this, inode, pos, buffer, len, pc);
 }
 
 future<> metadata_log::truncate(inode_t inode, file_offset_t size) {
+    if (_read_only) {
+        return make_exception_future(read_only_filesystem_exception());
+    }
     return truncate_operation::perform(*this, inode, size);
 }
 

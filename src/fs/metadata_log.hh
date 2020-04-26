@@ -64,6 +64,9 @@ class metadata_log {
     std::map<inode_t, inode_info> _inodes;
     inode_t _root_dir;
     shard_inode_allocator _inode_allocator;
+    bool _read_only = false;
+
+    void switch_fs_read_only_mode(bool val) noexcept;
 
     // Locks are used to ensure metadata consistency while allowing concurrent usage.
     //
@@ -355,6 +358,9 @@ public:
 
     // All disk-related errors will be exposed here
     future<> flush_log() {
+        if (_read_only) {
+            return make_exception_future(read_only_filesystem_exception());
+        }
         return flush_curr_cluster();
     }
 };

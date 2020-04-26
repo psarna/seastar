@@ -28,6 +28,7 @@
 #include "fs/units.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
+#include "seastar/fs/exceptions.hh"
 
 namespace seastar::fs {
 
@@ -58,6 +59,10 @@ class truncate_operation {
     }
 
     future<> do_truncate(file_offset_t size) {
+        if (_metadata_log._read_only) {
+            return make_exception_future(read_only_filesystem_exception());
+        }
+
         using namespace std::chrono;
         uint64_t curr_time_ns = duration_cast<nanoseconds>(system_clock::now().time_since_epoch()).count();
         ondisk_truncate ondisk_entry {
