@@ -24,7 +24,6 @@
 #include "fs/metadata_log.hh"
 #include "fs/path.hh"
 #include "seastar/core/future.hh"
-#include "seastar/fs/exceptions.hh"
 
 namespace seastar::fs {
 

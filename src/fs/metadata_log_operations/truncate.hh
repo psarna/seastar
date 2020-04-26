@@ -28,7 +28,6 @@
 #include "fs/units.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
-#include "seastar/fs/exceptions.hh"
 
 namespace seastar::fs {
 
