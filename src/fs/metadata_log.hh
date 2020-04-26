@@ -64,9 +64,16 @@ class metadata_log {
     std::map<inode_t, inode_info> _inodes;
     inode_t _root_dir;
     shard_inode_allocator _inode_allocator;
-    bool _read_only = false;
 
-    void switch_fs_read_only_mode(bool val) noexcept;
+    struct read_only_fs_tag { };
+    using read_only_fs = bool_class<read_only_fs_tag>;
+
+    read_only_fs _read_only_fs = read_only_fs::no;
+
+    void throw_if_in_read_only_mode();
+    future<> throw_exception_future_if_read_only_fs();
+
+    void set_fs_read_only_mode(read_only_fs val) noexcept;
 
     // Locks are used to ensure metadata consistency while allowing concurrent usage.
     //
@@ -228,6 +235,8 @@ private:
 
     template<class... Args>
     [[nodiscard]] append_result append_ondisk_entry(Args&&... args) {
+        throw_if_in_read_only_mode();
+
         using AR = append_result;
         // TODO: maybe check for errors on _background_futures to expose previous errors?
         switch (_curr_cluster_buff->append(args...)) {
@@ -358,9 +367,6 @@ public:
 
     // All disk-related errors will be exposed here
     future<> flush_log() {
-        if (_read_only) {
-            return make_exception_future(read_only_filesystem_exception());
-        }
         return flush_curr_cluster();
     }
 };

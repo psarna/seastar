@@ -34,13 +34,6 @@ class create_and_open_unlinked_file_operation {
     create_and_open_unlinked_file_operation(metadata_log& metadata_log) : _metadata_log(metadata_log) {}
 
     future<inode_t> create_and_open_unlinked_file(file_permissions perms) {
-        // TODO: We could move that check into append_ondisk_entry(). Then the compiler would warn us in case of not
-        //       checked cases. But we wouldn't be able to use append_ondisk_entry() in read-only state for example to
-        //       rewrite metadatalog when trying to fix something.
-        if (_metadata_log._read_only) {
-            return make_exception_future<inode_t>(read_only_filesystem_exception());
-        }
-
         using namespace std::chrono;
         uint64_t curr_time_ns = duration_cast<nanoseconds>(system_clock::now().time_since_epoch()).count();
         unix_metadata unx_mtdt = {
