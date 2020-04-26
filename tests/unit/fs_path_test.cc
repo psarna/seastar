@@ -24,7 +24,7 @@
 #define BOOST_TEST_MODULE fs
 #include <boost/test/included/unit_test.hpp>
 
-using namespace seastar::fs;
+using namespace seastar::fs::path;
 
 BOOST_AUTO_TEST_CASE(last_component_simple) {
     {

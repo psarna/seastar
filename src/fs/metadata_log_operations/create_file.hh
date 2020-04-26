@@ -55,7 +55,7 @@ class create_file_operation {
             }
         }
 
-        _entry_name = extract_last_component(path);
+        _entry_name = path::extract_last_component(path);
         if (_entry_name.empty()) {
             return make_exception_future<inode_t>(invalid_path_exception());
         }

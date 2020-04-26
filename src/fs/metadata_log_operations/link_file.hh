@@ -38,7 +38,7 @@ class link_file_operation {
 
     future<> link_file(inode_t inode, std::string path) {
         _src_inode = inode;
-        _entry_name = extract_last_component(path);
+        _entry_name = path::extract_last_component(path);
         if (_entry_name.empty()) {
             return make_exception_future(is_directory_exception());
         }

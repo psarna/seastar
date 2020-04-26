@@ -23,7 +23,7 @@
 
 #include <string>
 
-namespace seastar::fs {
+namespace seastar::fs::path {
 
 // Extracts the last component in @p path. WARNING: The last component is empty iff @p path is empty or ends with '/'
 inline std::string extract_last_component(std::string& path) {
@@ -38,5 +38,12 @@ inline std::string extract_last_component(std::string& path) {
     path.resize(beg + 1);
     return res;
 }
+
+// Returns first non-root component.
+std::string root_entry(const std::string& path);
+
+std::string canonical(std::string path, std::string curr_dir = "/");
+
+bool is_canonical(const std::string& path) noexcept;
 
 } // namespace seastar::fs

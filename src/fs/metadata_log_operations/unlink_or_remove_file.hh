@@ -54,7 +54,7 @@ class unlink_or_remove_file_operation {
             path.pop_back();
         }
 
-        _entry_name = extract_last_component(path);
+        _entry_name = path::extract_last_component(path);
         if (_entry_name.empty()) {
             return make_exception_future(invalid_path_exception()); // We cannot remove "/"
         }
