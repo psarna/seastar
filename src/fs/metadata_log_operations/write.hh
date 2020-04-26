@@ -32,7 +32,6 @@
 #include "seastar/core/future.hh"
 #include "seastar/core/shared_ptr.hh"
 #include "seastar/core/temporary_buffer.hh"
-#include "seastar/fs/exceptions.hh"
 
 namespace seastar::fs {
 
@@ -181,6 +180,8 @@ private:
                     if (buff_bytes_left <= SMALL_WRITE_THRESHOLD) {
                         // TODO: add wasted buff_bytes_left bytes for compaction
                         // No space left in the current to_disk_buffer for medium write - allocate a new buffer
+
+                        _metadata_log.throw_if_read_only_fs();
                         std::optional<cluster_id_t> cluster_opt = _metadata_log._cluster_allocator.alloc();
                         if (not cluster_opt) {
                             // TODO: maybe we should return partial write instead of exception?
@@ -258,6 +259,7 @@ private:
 
     future<size_t> do_large_write(const uint8_t* aligned_buffer, file_offset_t file_offset, bool update_mtime) {
         assert(reinterpret_cast<uintptr_t>(aligned_buffer) % _metadata_log._alignment == 0);
+
         _metadata_log.throw_if_read_only_fs();
 
         // aligned_expected_write_len = _metadata_log._cluster_size
