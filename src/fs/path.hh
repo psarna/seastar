@@ -47,4 +47,11 @@ inline std::string extract_last_component(std::string& path) {
     return res;
 }
 
+// Returns first non-root component.
+std::string root_entry(const std::string& path);
+
+std::string canonical(std::string path, std::string curr_dir = "/");
+
+bool is_canonical(const std::string& path) noexcept;
+
 } // namespace seastar::fs::path
