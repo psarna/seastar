@@ -224,7 +224,7 @@ private:
         assert(aligned_expected_write_len % _metadata_log._alignment == 0);
         assert(disk_buffer->bytes_left() >= aligned_expected_write_len);
 
-        _metadata_log.throw_if_in_read_only_mode();
+        _metadata_log.throw_if_read_only_fs();
 
         disk_offset_t device_offset = disk_buffer->current_disk_offset();
         return disk_buffer->write(aligned_buffer, aligned_expected_write_len, _metadata_log._device).then(
@@ -258,7 +258,7 @@ private:
 
     future<size_t> do_large_write(const uint8_t* aligned_buffer, file_offset_t file_offset, bool update_mtime) {
         assert(reinterpret_cast<uintptr_t>(aligned_buffer) % _metadata_log._alignment == 0);
-        _metadata_log.throw_if_in_read_only_mode();
+        _metadata_log.throw_if_read_only_fs();
 
         // aligned_expected_write_len = _metadata_log._cluster_size
         std::optional<cluster_id_t> cluster_opt = _metadata_log._cluster_allocator.alloc();

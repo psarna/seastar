@@ -70,7 +70,7 @@ class metadata_log {
 
     read_only_fs _read_only_fs = read_only_fs::no;
 
-    void throw_if_in_read_only_mode();
+    void throw_if_read_only_fs();
     future<> throw_exception_future_if_read_only_fs();
 
     void set_fs_read_only_mode(read_only_fs val) noexcept;
@@ -235,7 +235,7 @@ private:
 
     template<class... Args>
     [[nodiscard]] append_result append_ondisk_entry(Args&&... args) {
-        throw_if_in_read_only_mode();
+        throw_if_read_only_fs();
 
         using AR = append_result;
         // TODO: maybe check for errors on _background_futures to expose previous errors?

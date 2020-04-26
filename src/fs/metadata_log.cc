@@ -101,7 +101,7 @@ future<> metadata_log::throw_exception_future_if_read_only_fs() {
     return now();
 }
 
-void metadata_log::throw_if_in_read_only_mode() {
+void metadata_log::throw_if_read_only_fs() {
     auto fut = throw_exception_future_if_read_only_fs();
     if (__builtin_expect(fut.failed(), 0)) {
         throw read_only_filesystem_exception();
@@ -248,10 +248,10 @@ void metadata_log::memory_only_delete_dir_entry(inode_info::directory& dir, std:
 }
 
 void metadata_log::schedule_flush_of_curr_cluster() {
-    throw_if_in_read_only_mode();
+    throw_if_read_only_fs();
     // Make writes concurrent (TODO: maybe serialized within *one* cluster would be faster?)
     schedule_background_task(do_with(_curr_cluster_buff, &_device, [this](auto& crr_clstr_bf, auto& device) {
-        throw_if_in_read_only_mode();
+        throw_if_read_only_fs();
         return crr_clstr_bf->flush_to_disk(*device).handle_exception([this](std::exception_ptr ptr) {
             set_fs_read_only_mode(read_only_fs::yes);
             return make_exception_future(std::move(ptr));
@@ -279,7 +279,7 @@ future<> metadata_log::flush_curr_cluster() {
 }
 
 metadata_log::flush_result metadata_log::schedule_flush_of_curr_cluster_and_change_it_to_new_one() {
-    throw_if_in_read_only_mode();
+    throw_if_read_only_fs();
 
     auto next_cluster = _cluster_allocator.alloc();
     if (not next_cluster) {
@@ -300,9 +300,9 @@ metadata_log::flush_result metadata_log::schedule_flush_of_curr_cluster_and_chan
 }
 
 void metadata_log::schedule_attempt_to_delete_inode(inode_t inode) {
-    throw_if_in_read_only_mode();
+    throw_if_read_only_fs();
     return schedule_background_task([this, inode] {
-        throw_if_in_read_only_mode();
+        throw_if_read_only_fs();
 
         auto it = _inodes.find(inode);
         if (it == _inodes.end() or it->second.is_linked() or it->second.is_open()) {
