@@ -25,6 +25,8 @@
 
 #include <boost/algorithm/string.hpp>
 
+#include <unistd.h>
+
 namespace bpo = boost::program_options;
 
 constexpr size_t BATCH_SIZE = 1000;
@@ -80,6 +82,10 @@ int main(int argc, char *argv[]) {
             file_type = FileType::numerical;
         } else {
             file_type = FileType::all_types;
+        }
+
+        if (sleep(10) != 0){
+            throw std::runtime_error("mean signal");
         }
 
         std::string file = config["file"].as<std::string>();
