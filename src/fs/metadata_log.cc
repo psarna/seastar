@@ -53,6 +53,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
@@ -234,8 +235,11 @@ void metadata_log::memory_only_delete_dir_entry(inode_info::directory& dir, std:
 
 void metadata_log::schedule_flush_of_curr_cluster() {
     // Make writes concurrent (TODO: maybe serialized within *one* cluster would be faster?)
-    schedule_background_task(do_with(_curr_cluster_buff, &_device, [](auto& crr_clstr_bf, auto& device) {
-        return crr_clstr_bf->flush_to_disk(*device);
+    schedule_background_task(do_with(_curr_cluster_buff, &_device, [this](auto& crr_clstr_bf, auto& device) {
+        return crr_clstr_bf->flush_to_disk(*device).handle_exception([this](std::exception_ptr ptr) {
+            switch_fs_read_only_mode(true);
+            return make_exception_future(std::move(ptr));
+        });
     }));
 }
 
