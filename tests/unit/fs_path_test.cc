@@ -88,3 +88,85 @@ BOOST_AUTO_TEST_CASE(last_component_simple) {
         BOOST_REQUIRE_EQUAL(str, "//");
     }
 }
+
+BOOST_AUTO_TEST_CASE(path_canonical_simple) {
+    BOOST_REQUIRE_EQUAL(canonical("/foo/bar/"), "/foo/bar/");
+    BOOST_REQUIRE_EQUAL(canonical("/foo/bar/////"), "/foo/bar/");
+    BOOST_REQUIRE_EQUAL(canonical("/foo/bar/../"), "/foo/");
+    BOOST_REQUIRE_EQUAL(canonical("/foo/bar/.."), "/foo/");
+    BOOST_REQUIRE_EQUAL(canonical("/foo/bar/xd"), "/foo/bar/xd");
+    BOOST_REQUIRE_EQUAL(canonical("/foo/bar/////xd"), "/foo/bar/xd");
+    BOOST_REQUIRE_EQUAL(canonical("/foo/bar/../xd"), "/foo/xd");
+    BOOST_REQUIRE_EQUAL(canonical("/foo/bar/../xd/."), "/foo/xd/");
+    BOOST_REQUIRE_EQUAL(canonical("/foo/bar/./../xd/."), "/foo/xd/");
+    BOOST_REQUIRE_EQUAL(canonical("/.."), "/");
+    BOOST_REQUIRE_EQUAL(canonical(".."), "/");
+    BOOST_REQUIRE_EQUAL(canonical("/////"), "/");
+    BOOST_REQUIRE_EQUAL(canonical("////a/////"), "/a/");
+
+    BOOST_REQUIRE_EQUAL(canonical("/my/path/foo.bar"), "/my/path/foo.bar");
+    BOOST_REQUIRE_EQUAL(canonical("/my/path/"), "/my/path/");
+    BOOST_REQUIRE_EQUAL(canonical("/"), "/");
+    BOOST_REQUIRE_EQUAL(canonical(""), "/");
+    BOOST_REQUIRE_EQUAL(canonical("/my/path/."), "/my/path/");
+    BOOST_REQUIRE_EQUAL(canonical("/my/path/.."), "/my/");
+    BOOST_REQUIRE_EQUAL(canonical("foo"), "/foo");
+    BOOST_REQUIRE_EQUAL(canonical("/lol/../foo."), "/foo.");
+    BOOST_REQUIRE_EQUAL(canonical("/lol/../.foo."), "/.foo.");
+    BOOST_REQUIRE_EQUAL(canonical("/.foo."), "/.foo.");
+    BOOST_REQUIRE_EQUAL(canonical(".foo."), "/.foo.");
+    BOOST_REQUIRE_EQUAL(canonical("./foo."), "/foo.");
+    BOOST_REQUIRE_EQUAL(canonical("./f"), "/f");
+    BOOST_REQUIRE_EQUAL(canonical("../"), "/");
+
+    BOOST_REQUIRE_EQUAL(canonical("../../a", "foo/bar"), "a");
+    BOOST_REQUIRE_EQUAL(canonical("../../a/../b", "foo/bar"), "b");
+    BOOST_REQUIRE_EQUAL(canonical("../", "foo/bar"), "foo/");
+    BOOST_REQUIRE_EQUAL(canonical("gg", "foo/bar"), "foo/bar/gg");
+}
+
+BOOST_AUTO_TEST_CASE(is_path_canonical_simple) {
+    BOOST_REQUIRE_EQUAL(is_canonical("/foo/bar/"), true);
+    BOOST_REQUIRE_EQUAL(is_canonical("/foo/bar/////"), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("/foo/bar/../"), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("/foo/bar/.."), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("/foo/bar/xd"), true);
+    BOOST_REQUIRE_EQUAL(is_canonical("/foo/bar/////xd"), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("/foo/bar/../xd"), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("/foo/bar/../xd/."), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("/foo/bar/./../xd/."), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("/.."), false);
+    BOOST_REQUIRE_EQUAL(is_canonical(".."), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("/////"), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("////a/////"), false);
+
+    BOOST_REQUIRE_EQUAL(is_canonical("/my/path/foo.bar"), true);
+    BOOST_REQUIRE_EQUAL(is_canonical("/my/path/"), true);
+    BOOST_REQUIRE_EQUAL(is_canonical("/"), true);
+    BOOST_REQUIRE_EQUAL(is_canonical(""), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("/my/path/."), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("/my/path/.."), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("foo"), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("/lol/../foo."), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("/lol/../.foo."), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("/.foo."), true);
+    BOOST_REQUIRE_EQUAL(is_canonical(".foo."), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("./foo."), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("./f"), false);
+    BOOST_REQUIRE_EQUAL(is_canonical("../"), false);
+}
+
+BOOST_AUTO_TEST_CASE(first_component_simple) {
+    BOOST_REQUIRE_EQUAL(root_entry(""), "");
+    BOOST_REQUIRE_EQUAL(root_entry("/"), "");
+    BOOST_REQUIRE_EQUAL(root_entry("/foo/bar.txt"), "foo");
+    BOOST_REQUIRE_EQUAL(root_entry("/foo/.bar"), "foo");
+    BOOST_REQUIRE_EQUAL(root_entry("/foo/bar/"), "foo");
+    BOOST_REQUIRE_EQUAL(root_entry("/foo/."), "foo");
+    BOOST_REQUIRE_EQUAL(root_entry("/foo/.."), "foo");
+    BOOST_REQUIRE_EQUAL(root_entry("bar.txt"), "bar.txt");
+    BOOST_REQUIRE_EQUAL(root_entry(".bar"), ".bar");
+    BOOST_REQUIRE_EQUAL(root_entry("."), ".");
+    BOOST_REQUIRE_EQUAL(root_entry(".."), "..");
+    BOOST_REQUIRE_EQUAL(root_entry("//host"), "");
+}
