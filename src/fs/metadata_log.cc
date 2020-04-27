@@ -94,13 +94,6 @@ future<> metadata_log::shutdown() {
     });
 }
 
-future<> metadata_log::throw_exception_future_if_read_only_fs() {
-    if (__builtin_expect(_read_only_fs == read_only_fs::yes, false)) {
-        return make_exception_future(read_only_filesystem_exception());
-    }
-    return now();
-}
-
 void metadata_log::throw_if_read_only_fs() {
     if (__builtin_expect(_read_only_fs == read_only_fs::yes, false)) {
         throw read_only_filesystem_exception();
@@ -250,11 +243,10 @@ void metadata_log::schedule_flush_of_curr_cluster() {
     throw_if_read_only_fs();
     // Make writes concurrent (TODO: maybe serialized within *one* cluster would be faster?)
     schedule_background_task(do_with(_curr_cluster_buff, &_device, [this](auto& crr_clstr_bf, auto& device) {
-        return throw_exception_future_if_read_only_fs().then([this, &crr_clstr_bf, &device] {
-            return crr_clstr_bf->flush_to_disk(*device).handle_exception([this](std::exception_ptr ptr) {
-                set_fs_read_only_mode(read_only_fs::yes);
-                return make_exception_future(std::move(ptr));
-            });
+        throw_if_read_only_fs();
+        return crr_clstr_bf->flush_to_disk(*device).handle_exception([this](std::exception_ptr ptr) {
+            set_fs_read_only_mode(read_only_fs::yes);
+            return make_exception_future(std::move(ptr));
         });
     }));
 }

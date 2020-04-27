@@ -71,7 +71,6 @@ class metadata_log {
     read_only_fs _read_only_fs = read_only_fs::no;
 
     void throw_if_read_only_fs();
-    future<> throw_exception_future_if_read_only_fs();
 
     void set_fs_read_only_mode(read_only_fs val) noexcept;
 
