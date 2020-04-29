@@ -706,6 +706,9 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/path.cc
     src/fs/path.hh
     src/fs/temporary_file.hh
+    src/fs/range.hh
+    src/fs/shared_root.cc
+    src/fs/shared_root.hh
     src/fs/to_disk_buffer.hh
     src/fs/unix_metadata.hh
     src/fs/val_or_err.hh
