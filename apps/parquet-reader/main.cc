@@ -22,10 +22,11 @@
 #include <seastar/parquet/file_reader.hh>
 #include <seastar/core/thread.hh>
 #include <seastar/core/app-template.hh>
+#include <seastar/core/thread_cputime_clock.hh>
+#include <seastar/core/future-util.hh>
 
 #include <boost/algorithm/string.hpp>
-
-#include <unistd.h>
+#include <boost/iterator/counting_iterator.hpp>
 
 namespace bpo = boost::program_options;
 
@@ -39,7 +40,14 @@ enum class FileType {
     all_types
 };
 
-template <parquet::format::Type::type T>
+void spin(std::chrono::duration<double> how_much) {
+    auto end = seastar::thread_cputime_clock::now() + how_much;
+    while (seastar::thread_cputime_clock::now() < end) {
+        // spin!
+    }
+}
+
+template<parquet::format::Type::type T>
 void readColumn(parquet::file_reader &fr, int row, int column) {
     using OutputType = typename parquet::value_decoder_traits<T>::output_type;
 
@@ -47,8 +55,7 @@ void readColumn(parquet::file_reader &fr, int row, int column) {
     OutputType values[BATCH_SIZE];
     int16_t def_levels[BATCH_SIZE];
     int16_t rep_levels[BATCH_SIZE];
-    while (int64_t rows_read = column_reader.read_batch(BATCH_SIZE, def_levels, rep_levels, (OutputType *) values).get0()) {
-        ;
+    while (int64_t rows_read = column_reader.read_batch(BATCH_SIZE, def_levels, rep_levels, (OutputType *) values).get0()) { ;
     }
 }
 
@@ -65,7 +72,7 @@ int main(int argc, char *argv[]) {
     using namespace parquet;
     seastar::app_template app;
     app.add_options()
-            ("file", bpo::value<std::string>(), "Parquet file path")
+            ("filename", bpo::value<std::string>(), "Parquet file path")
             ("filetype", bpo::value<std::string>(), "File type");
 
     app.run(argc, argv, [&app] {
@@ -84,143 +91,139 @@ int main(int argc, char *argv[]) {
             file_type = FileType::all_types;
         }
 
-        if (sleep(10) != 0){
-            throw std::runtime_error("mean signal");
-        }
-
-        std::string file = config["file"].as<std::string>();
+        std::string file = config["filename"].as<std::string>();
         return seastar::async([file, file_type] {
             auto fr = file_reader::open(file).get0();
             int num_row_groups = fr.metadata().row_groups.size();
-            for (int r = 0; r < num_row_groups; ++r) {
-                switch (file_type) {
-                    case FileType::long_strings:
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, 0);
-                        break;
-                    case FileType::mixed:
-                        readColumn<format::Type::BOOLEAN>(fr, r, 0);
-                        readColumn<format::Type::INT32>(fr, r, 1);
-                        readColumn<format::Type::INT64>(fr, r, 2);
-                        readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, 3);
-                        break;
-                    case FileType::nested:
-                        readColumn<format::Type::INT64>(fr, r, 0);
-                        readColumn<format::Type::INT64>(fr, r, 1);
-                        readColumn<format::Type::INT64>(fr, r, 2);
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, 3);
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, 4);
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, 5);
-                        break;
-                    case FileType::numerical:
-                        readColumn<format::Type::INT32>(fr, r, 0);
-                        readColumn<format::Type::INT32>(fr, r, 1);
-                        readColumn<format::Type::INT64>(fr, r, 2);
-                        break;
-                    case FileType::all_types:
-                        int i = 0;
 
-                        readColumn<format::Type::BOOLEAN>(fr, r, i++);
-                        readColumn<format::Type::BOOLEAN>(fr, r, i++);
+            seastar::parallel_for_each(boost::counting_iterator<int>(0),
+               boost::counting_iterator<int>(num_row_groups),
+               [file_type, &fr](int r) {
+                   switch (file_type) {
+                       case FileType::long_strings:readColumn<format::Type::BYTE_ARRAY>(fr, r, 0);
+                           break;
+                       case FileType::mixed:readColumn<format::Type::BOOLEAN>(fr, r, 0);
+                           readColumn<format::Type::INT32>(fr, r, 1);
+                           readColumn<format::Type::INT64>(fr, r, 2);
+                           readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, 3);
+                           break;
+                       case FileType::nested:readColumn<format::Type::INT64>(fr, r, 0);
+                           readColumn<format::Type::INT64>(fr, r, 1);
+                           readColumn<format::Type::INT64>(fr, r, 2);
+                           readColumn<format::Type::BYTE_ARRAY>(fr, r, 3);
+                           readColumn<format::Type::BYTE_ARRAY>(fr, r, 4);
+                           readColumn<format::Type::BYTE_ARRAY>(fr, r, 5);
+                           break;
+                       case FileType::numerical:readColumn<format::Type::INT32>(fr, r, 0);
+                           readColumn<format::Type::INT32>(fr, r, 1);
+                           readColumn<format::Type::INT64>(fr, r, 2);
+                           break;
+                       case FileType::all_types:int i = 0;
 
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::BOOLEAN>(fr, r, i++);
+                           readColumn<format::Type::BOOLEAN>(fr, r, i++);
 
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
 
-                        readColumn<format::Type::INT96>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
 
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT96>(fr, r, i++);
 
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
 
-                        readColumn<format::Type::FLOAT>(fr, r, i++);
-                        readColumn<format::Type::FLOAT>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
 
-                        readColumn<format::Type::DOUBLE>(fr, r, i++);
-                        readColumn<format::Type::DOUBLE>(fr, r, i++);
+                           readColumn<format::Type::FLOAT>(fr, r, i++);
+                           readColumn<format::Type::FLOAT>(fr, r, i++);
 
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::DOUBLE>(fr, r, i++);
+                           readColumn<format::Type::DOUBLE>(fr, r, i++);
 
-                        readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
-                        readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
 
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
 
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
 
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
 
-                        readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
-                        readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
 
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
 
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
 
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
-                        readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
 
-                        readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
-                        readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
 
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
-                        readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
 
-                        readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
+                           readColumn<format::Type::BYTE_ARRAY>(fr, r, i++);
 
-                        readColumn<format::Type::INT64>(fr, r, i++);
+                           readColumn<format::Type::FIXED_LEN_BYTE_ARRAY>(fr, r, i++);
 
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT64>(fr, r, i++);
 
-                        readColumn<format::Type::BOOLEAN>(fr, r, i++);
-                        readColumn<format::Type::BOOLEAN>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
 
-                        readColumn<format::Type::INT32>(fr, r, i++);
-                        readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::BOOLEAN>(fr, r, i++);
+                           readColumn<format::Type::BOOLEAN>(fr, r, i++);
 
-                        readColumn<format::Type::FLOAT>(fr, r, i++);
-                        readColumn<format::Type::DOUBLE>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
+                           readColumn<format::Type::INT32>(fr, r, i++);
 
-                        break;
-                }
-            }
+                           readColumn<format::Type::FLOAT>(fr, r, i++);
+                           readColumn<format::Type::DOUBLE>(fr, r, i++);
+
+                           break;
+                   }
+                   return seastar::make_ready_future<>();
+               }
+            ).get();
         });
     });
     return 0;
