@@ -701,6 +701,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/device_reader.cc
     src/fs/device_reader.hh
     src/fs/file.cc
+    src/fs/file_handle.hh
     src/fs/inode_utils.hh
     src/fs/path.cc
     src/fs/path.hh
