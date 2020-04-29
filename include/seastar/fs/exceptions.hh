@@ -65,6 +65,14 @@ struct directory_not_empty_exception : public fs_exception {
     const char* what() const noexcept override { return "Directory is not empty"; }
 };
 
+struct file_used_on_unintended_shard_exception : public fs_exception {
+    const char* what() const noexcept override { return "File used on unintended shard"; }
+};
+
+struct file_has_been_closed_exception : public fs_exception {
+    const char* what() const noexcept override { return "File has been closed"; }
+};
+
 struct path_lookup_exception : public fs_exception {
     const char* what() const noexcept override = 0;
 };
