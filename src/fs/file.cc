@@ -25,6 +25,10 @@
 
 namespace seastar::fs {
 
+seastarfs_file_impl::seastarfs_file_impl(shared_file_handle file_handle, open_flags flags)
+    : _file_handle(std::move(file_handle))
+    , _open_flags(flags) {}
+
 seastarfs_file_impl::seastarfs_file_impl(block_device dev, open_flags flags)
     : _block_device(std::move(dev))
     , _open_flags(flags) {}

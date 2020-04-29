@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include "fs/file_handle.hh"
+
 #include "seastar/core/file.hh"
 #include "seastar/core/future.hh"
 #include "seastar/fs/block_device.hh"
@@ -28,9 +30,11 @@
 namespace seastar::fs {
 
 class seastarfs_file_impl : public file_impl {
+    shared_file_handle _file_handle;
     block_device _block_device;
     open_flags _open_flags;
 public:
+    seastarfs_file_impl(shared_file_handle file_handle, open_flags flags);
     seastarfs_file_impl(block_device dev, open_flags flags);
     ~seastarfs_file_impl() override = default;
 
