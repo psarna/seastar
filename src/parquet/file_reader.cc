@@ -111,18 +111,24 @@ file_reader::open_column_chunk_reader_internal(uint32_t row_group, uint32_t colu
         }
     }().then([&column_chunk, &leaf] (seastar::file f) {
         return [&column_chunk, f] {
+            struct seastar::file_input_stream_options input_options;
+            input_options.read_ahead = 16;
+
             if (column_chunk.__isset.meta_data) {
                 return seastar::make_ready_future<std::unique_ptr<format::ColumnMetaData>>(
                         std::make_unique<format::ColumnMetaData>(column_chunk.meta_data));
             } else {
-                return read_chunk_metadata(seastar::make_file_input_stream(f, column_chunk.file_offset));
+                return read_chunk_metadata(seastar::make_file_input_stream(f, column_chunk.file_offset, input_options));
             }
         }().then([f, &leaf] (std::unique_ptr<format::ColumnMetaData> column_metadata) {
+            struct seastar::file_input_stream_options input_options;
+            input_options.read_ahead = 16;
+
             size_t file_offset = column_metadata->__isset.dictionary_page_offset
                                  ? column_metadata->dictionary_page_offset
                                  : column_metadata->data_page_offset;
             page_reader page_reader{
-                    seastar::make_file_input_stream(f, file_offset, column_metadata->total_compressed_size)};
+                    seastar::make_file_input_stream(f, file_offset, column_metadata->total_compressed_size, input_options)};
             return column_chunk_reader<T>(leaf, std::move(page_reader), column_metadata->codec);
         });
     });
