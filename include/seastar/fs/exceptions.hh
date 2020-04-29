@@ -65,6 +65,10 @@ struct directory_not_empty_exception : public fs_exception {
     const char* what() const noexcept override { return "Directory is not empty"; }
 };
 
+struct cannot_modify_root_exception : public fs_exception {
+    const char* what() const noexcept override { return "Cannot modify the root"; }
+};
+
 struct file_used_on_unintended_shard_exception : public fs_exception {
     const char* what() const noexcept override { return "File used on unintended shard"; }
 };
