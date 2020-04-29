@@ -81,6 +81,10 @@ struct too_little_available_clusters_exception : public fs_exception {
     const char* what() const noexcept override { return "Too little available clusters"; }
 };
 
+struct file_has_been_closed_exception : public fs_exception {
+    const char* what() const noexcept override { return "File has been closed"; }
+};
+
 struct path_lookup_exception : public fs_exception {
     const char* what() const noexcept override = 0;
 };

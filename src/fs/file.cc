@@ -21,6 +21,7 @@
 
 #include "seastar/core/future.hh"
 #include "seastar/fs/block_device.hh"
+#include "seastar/fs/exceptions.hh"
 #include "seastar/fs/file.hh"
 
 namespace seastar::fs {
@@ -29,13 +30,12 @@ seastarfs_file_impl::seastarfs_file_impl(shared_file_handle file_handle, open_fl
     : _file_handle(std::move(file_handle))
     , _open_flags(flags) {}
 
-seastarfs_file_impl::seastarfs_file_impl(block_device dev, open_flags flags)
-    : _block_device(std::move(dev))
-    , _open_flags(flags) {}
-
 future<size_t>
 seastarfs_file_impl::write_dma(uint64_t pos, const void* buffer, size_t len, const io_priority_class& pc) {
-    return _block_device.write(pos, buffer, len, pc);
+    throw_if_file_closed();
+    /* TODO: check _open_flags */
+
+    return _file_handle->write(pos, buffer, len, pc);
 }
 
 future<size_t>
@@ -45,7 +45,10 @@ seastarfs_file_impl::write_dma(uint64_t pos, std::vector<iovec> iov, const io_pr
 
 future<size_t>
 seastarfs_file_impl::read_dma(uint64_t pos, void* buffer, size_t len, const io_priority_class& pc) {
-    return _block_device.read(pos, buffer, len, pc);
+    throw_if_file_closed();
+    /* TODO: check _open_flags */
+
+    return _file_handle->read(pos, buffer, len, pc);
 }
 
 future<size_t>
@@ -55,17 +58,31 @@ seastarfs_file_impl::read_dma(uint64_t pos, std::vector<iovec> iov, const io_pri
 
 future<>
 seastarfs_file_impl::flush() {
-    return _block_device.flush();
+    throw_if_file_closed();
+    /* TODO: check _open_flags */
+
+    return _file_handle->flush();
 }
 
 future<struct stat>
 seastarfs_file_impl::stat() {
+    /* TODO: solve problem between stat_data and struct stat */
     throw std::bad_function_call();
 }
 
+future<stat_data>
+seastarfs_file_impl::stat_dt() {
+    throw_if_file_closed();
+
+    return _file_handle->stat();
+}
+
 future<>
-seastarfs_file_impl::truncate(uint64_t) {
-    throw std::bad_function_call();
+seastarfs_file_impl::truncate(uint64_t length) {
+    throw_if_file_closed();
+    /* TODO: check _open_flags */
+
+    return _file_handle->truncate(length);
 }
 
 future<>
@@ -80,12 +97,16 @@ seastarfs_file_impl::allocate(uint64_t position, uint64_t length) {
 
 future<uint64_t>
 seastarfs_file_impl::size() {
-    throw std::bad_function_call();
+    throw_if_file_closed();
+
+    return _file_handle->size();
 }
 
 future<>
 seastarfs_file_impl::close() noexcept {
-    return _block_device.close();
+    throw_if_file_closed();
+
+    return _file_handle->close();
 }
 
 std::unique_ptr<file_handle_impl>
@@ -103,10 +124,11 @@ seastarfs_file_impl::dma_read_bulk(uint64_t offset, size_t range_size, const io_
     throw std::bad_function_call();
 }
 
-future<file> open_file_dma(std::string name, open_flags flags) {
-    return open_block_device(std::move(name)).then([flags] (block_device bd) {
-        return file(make_shared<seastarfs_file_impl>(std::move(bd), flags));
-    });
+void
+seastarfs_file_impl::throw_if_file_closed() {
+    if (__builtin_expect(!_file_handle, false)) {
+        throw file_has_been_closed_exception();
+    }
 }
 
 }
