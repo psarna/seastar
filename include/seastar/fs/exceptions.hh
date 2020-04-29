@@ -73,6 +73,14 @@ struct file_used_on_unintended_shard_exception : public fs_exception {
     const char* what() const noexcept override { return "File used on unintended shard"; }
 };
 
+struct invalid_cluster_range_exception : public fs_exception {
+    const char* what() const noexcept override { return "Invalid cluster range"; }
+};
+
+struct too_little_available_clusters_exception : public fs_exception {
+    const char* what() const noexcept override { return "Too little available clusters"; }
+};
+
 struct path_lookup_exception : public fs_exception {
     const char* what() const noexcept override = 0;
 };

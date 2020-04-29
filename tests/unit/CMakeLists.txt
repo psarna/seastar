@@ -373,6 +373,8 @@ if (Seastar_EXPERIMENTAL_FS)
   seastar_add_test (fs_cluster_allocator
     KIND BOOST
     SOURCES fs_cluster_allocator_test.cc)
+  seastar_add_test (fs_filesystem
+          SOURCES fs_filesystem_test.cc)
   seastar_add_test (fs_log_bootstrap
     SOURCES
       fs_log_bootstrap_test.cc
