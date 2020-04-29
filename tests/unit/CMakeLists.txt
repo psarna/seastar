@@ -398,8 +398,6 @@ if (Seastar_EXPERIMENTAL_FS)
     SOURCES
       fs_write_test.cc
       fs_mock_block_device.cc)
-  seastar_add_test (fs_seastarfs
-    SOURCES fs_seastarfs_test.cc)
   seastar_add_test (fs_to_disk_buffer
     SOURCES
       fs_to_disk_buffer_test.cc
