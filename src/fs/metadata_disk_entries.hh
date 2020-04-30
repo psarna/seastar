@@ -179,6 +179,27 @@ struct ondisk_delete_inode_and_dir_entry_header {
 } __attribute__((packed));
 
 template<typename T>
+constexpr size_t ondisk_entry_size() noexcept {
+    static_assert(std::is_same_v<T, ondisk_next_metadata_cluster> or
+            std::is_same_v<T, ondisk_create_inode> or
+            std::is_same_v<T, ondisk_delete_inode> or
+            std::is_same_v<T, ondisk_medium_write> or
+            std::is_same_v<T, ondisk_large_write> or
+            std::is_same_v<T, ondisk_large_write_without_mtime> or
+            std::is_same_v<T, ondisk_truncate>, "ondisk entry size not defined for given type");
+    return sizeof(ondisk_type) + sizeof(T);
+}
+template<typename T>
+constexpr size_t ondisk_entry_size(size_t data_length) noexcept {
+    static_assert(std::is_same_v<T, ondisk_small_write_header> or
+            std::is_same_v<T, ondisk_add_dir_entry_header> or
+            std::is_same_v<T, ondisk_create_inode_as_dir_entry_header> or
+            std::is_same_v<T, ondisk_delete_dir_entry_header> or
+            std::is_same_v<T, ondisk_delete_inode_and_dir_entry_header>
+            , "ondisk entry size not defined for given type");
+    return sizeof(ondisk_type) + sizeof(T) + data_length;
+}
+template<typename T>
 constexpr size_t ondisk_entry_size(const T& entry) noexcept {
     static_assert(std::is_same_v<T, ondisk_next_metadata_cluster> or
             std::is_same_v<T, ondisk_create_inode> or
@@ -190,19 +211,19 @@ constexpr size_t ondisk_entry_size(const T& entry) noexcept {
     return sizeof(ondisk_type) + sizeof(entry);
 }
 constexpr size_t ondisk_entry_size(const ondisk_small_write_header& entry) noexcept {
-    return sizeof(ondisk_type) + sizeof(entry) + entry.length;
+    return ondisk_entry_size<ondisk_small_write_header>(entry.length);
 }
 constexpr size_t ondisk_entry_size(const ondisk_add_dir_entry_header& entry) noexcept {
-    return sizeof(ondisk_type) + sizeof(entry) + entry.entry_name_length;
+    return ondisk_entry_size<ondisk_add_dir_entry_header>(entry.entry_name_length);
 }
 constexpr size_t ondisk_entry_size(const ondisk_create_inode_as_dir_entry_header& entry) noexcept {
-    return sizeof(ondisk_type) + sizeof(entry) + entry.entry_name_length;
+    return ondisk_entry_size<ondisk_create_inode_as_dir_entry_header>(entry.entry_name_length);
 }
 constexpr size_t ondisk_entry_size(const ondisk_delete_dir_entry_header& entry) noexcept {
-    return sizeof(ondisk_type) + sizeof(entry) + entry.entry_name_length;
+    return ondisk_entry_size<ondisk_delete_dir_entry_header>(entry.entry_name_length);
 }
 constexpr size_t ondisk_entry_size(const ondisk_delete_inode_and_dir_entry_header& entry) noexcept {
-    return sizeof(ondisk_type) + sizeof(entry) + entry.entry_name_length;
+    return ondisk_entry_size<ondisk_delete_inode_and_dir_entry_header>(entry.entry_name_length);
 }
 
 } // namespace seastar::fs
