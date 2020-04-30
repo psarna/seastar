@@ -22,6 +22,7 @@
 #pragma once
 
 #include "fs/backend/inode_info.hh"
+#include "seastar/core/rwlock.hh"
 #include "seastar/fs/unit_types.hh"
 
 #include <map>
@@ -37,6 +38,7 @@ public:
     };
 
 private:
+    rwlock _lock;
     size_t _up_to_date_data_size = 0;
     std::map<disk_offset_t, cluster_data_vec> _data;
 
@@ -47,6 +49,21 @@ public:
 
     bool is_empty() const noexcept {
         return _up_to_date_data_size == 0;
+    }
+
+    void read_lock_nowait() {
+        bool locked = _lock.try_read_lock();
+        assert(locked);
+    }
+
+    void read_unlock() {
+        _lock.read_unlock();
+    }
+
+    future<> wait_for_all_readers_to_unlock() {
+        return _lock.write_lock().then([this] {
+            _lock.write_unlock();
+        });
     }
 
     void add_data(disk_offset_t disk_offset, inode_t inode, file_range data_range) noexcept {

@@ -160,6 +160,27 @@ class shard {
         }
     } _locks;
 
+    template<class Func> // TODO: use noncopyable_function
+    futurize_t<std::result_of_t<Func ()>>
+    with_data_cluster_read_locks_nowait(std::vector<cluster_id_t> cluster_ids, Func&& func) {
+        std::vector<data_cluster_contents_info*> data_clusters_info;
+        data_clusters_info.reserve(cluster_ids.size());
+        for (auto& cluster_id : cluster_ids) {
+            auto it = _data_cluster_contents_info_map.find(cluster_id);
+            assert(it != _data_cluster_contents_info_map.end());
+            it->second->read_lock_nowait();
+            data_clusters_info.emplace_back(it->second);
+        }
+        return now().then([func = std::forward<Func>(func)]() mutable {
+            return func();
+        }).finally([this, data_clusters_info = std::move(data_clusters_info)] {
+            // TODO: we could just use find again to omit allocating memory for data_clusters_info
+            for (auto& data_cluster_info : data_clusters_info) {
+                data_cluster_info->read_unlock();
+            }
+        });
+    }
+
     friend class bootstrapping;
 
     friend class create_and_open_unlinked_file_operation;
