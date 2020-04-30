@@ -181,6 +181,11 @@ private:
                             // TODO: maybe we should return partial write instead of exception?
                             return make_exception_future<bool_class<stop_iteration_tag>>(no_more_space_exception());
                         }
+                        auto finished_cluster_offset = _shard._medium_data_log_cw->initial_disk_offset();
+                        auto finished_cluster_id = offset_to_cluster_id(finished_cluster_offset, _shard._cluster_size);
+                        if (_shard._medium_data_log_cw->get_use_counter() == 0) {
+                            _shard.finish_writing_data_cluster(finished_cluster_id);
+                        }
 
                         auto cluster_id = cluster_opt.value();
                         disk_offset_t cluster_disk_offset = cluster_id_to_offset(cluster_id, _shard._cluster_size);
@@ -214,16 +219,18 @@ private:
     }
 
     future<size_t> do_medium_write(const uint8_t* aligned_buffer, size_t aligned_expected_write_len, file_offset_t file_offset,
-            shared_ptr<cluster_writer> disk_buffer) {
+            shared_ptr<cluster_writer> data_writer) {
+        // TODO: rename data_writer to something more meaningful i.e. corresponding with _shard._medium_data_log_cw
         assert(reinterpret_cast<uintptr_t>(aligned_buffer) % _shard._alignment == 0);
         assert(aligned_expected_write_len % _shard._alignment == 0);
-        assert(disk_buffer->bytes_left() >= aligned_expected_write_len);
+        assert(data_writer->bytes_left() >= aligned_expected_write_len);
 
         _shard.throw_if_read_only_fs();
 
-        disk_offset_t device_offset = disk_buffer->current_disk_offset();
-        return disk_buffer->write(aligned_buffer, aligned_expected_write_len, _shard._device).then(
-                [this, file_offset, disk_buffer = std::move(disk_buffer), device_offset](size_t write_len) {
+        disk_offset_t device_offset = data_writer->current_disk_offset();
+        data_writer->change_use_counter(1);
+        return data_writer->write(aligned_buffer, aligned_expected_write_len, _shard._device).then(
+                [this, file_offset, data_writer, device_offset](size_t write_len) {
             // TODO: is this round down necessary?
             // On partial write return aligned write length
             write_len = round_down_to_multiple_of_power_of_2(write_len, _shard._alignment);
@@ -249,6 +256,13 @@ private:
                 return make_ready_future<size_t>(write_len);
             }
             __builtin_unreachable();
+        }).finally([this, data_writer] {
+            data_writer->change_use_counter(-1);
+            if (data_writer->get_use_counter() == 0 && _shard._medium_data_log_cw->initial_disk_offset() !=
+                    data_writer->initial_disk_offset()) {
+                _shard.finish_writing_data_cluster(
+                        offset_to_cluster_id(data_writer->initial_disk_offset(), _shard._cluster_size));
+            }
         });
     }
 
@@ -300,6 +314,7 @@ private:
                 return make_exception_future<size_t>(no_more_space_exception());
             case shard::append_result::APPENDED:
                 _shard.memory_only_disk_write(_inode, file_offset, cluster_disk_offset, write_len);
+                _shard.finish_writing_data_cluster(cluster_id);
                 return make_ready_future<size_t>(write_len);
             }
             __builtin_unreachable();
