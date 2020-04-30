@@ -22,6 +22,7 @@
 #include "fs/cluster.hh"
 #include "fs/cluster_allocator.hh"
 #include "fs/data_cluster_contents_info.hh"
+#include "fs/data_compaction.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
@@ -158,6 +159,9 @@ void metadata_log::cut_out_data_range(inode_info::file& file, file_range range) 
         };
         visit_remains(left_remains);
         visit_remains(right_remains);
+
+        // TODO: empty clusters compaction: we can check here if data cluster is empty we won't write to that cluster.
+        //       Then we can schedule compaction of that cluster here.
     });
 }
 
@@ -317,6 +321,21 @@ void metadata_log::finish_writing_data_cluster(cluster_id_t cluster_id) {
     assert(!nh.empty());
     auto insert_res = _read_only_data_clusters.insert(std::move(nh));
     assert(insert_res.inserted);
+}
+
+void metadata_log::make_data_cluster_writable(cluster_id_t cluster_id) {
+    auto nh = _read_only_data_clusters.extract(cluster_id);
+    assert(!nh.empty());
+    auto insert_res = _writable_data_clusters.insert(std::move(nh));
+    assert(insert_res.inserted);
+}
+
+void metadata_log::free_writable_data_cluster(cluster_id_t cluster_id) noexcept {
+    auto num = _data_cluster_contents_info_map.erase(cluster_id);
+    assert(num == 1);
+    num = _writable_data_clusters.erase(cluster_id);
+    assert(num == 1);
+    _cluster_allocator.free(cluster_id);
 }
 
 void metadata_log::schedule_flush_of_curr_cluster() {
@@ -622,6 +641,10 @@ future<size_t> metadata_log::write(inode_t inode, file_offset_t pos, const void*
 
 future<> metadata_log::truncate(inode_t inode, file_offset_t size) {
     return truncate_operation::perform(*this, inode, size);
+}
+
+future<> metadata_log::compact_data_clusters(std::vector<cluster_id_t> cluster_ids) {
+    return data_compaction::perform(*this, std::move(cluster_ids));
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,
