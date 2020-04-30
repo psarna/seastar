@@ -172,6 +172,9 @@ private:
                     // We must use medium write
                     size_t buff_bytes_left = _shard._medium_data_log_cw->bytes_left();
                     if (buff_bytes_left <= SMALL_WRITE_THRESHOLD) {
+                        // TODO: empty clusters compaction: we could check here if current data cluster has no up-to-date
+                        //       data. If so we could schedule compaction of that cluster in order to immediately move it
+                        //       to _cluster_allocator.
                         // TODO: add wasted buff_bytes_left bytes for compaction
                         // No space left in the current to_disk_buffer for medium write - allocate a new buffer
 

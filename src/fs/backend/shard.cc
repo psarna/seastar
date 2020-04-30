@@ -23,6 +23,7 @@
 #include "fs/backend/create_and_open_unlinked_file.hh"
 #include "fs/backend/create_file.hh"
 #include "fs/backend/data_cluster_contents_info.hh"
+#include "fs/backend/data_compaction.hh"
 #include "fs/backend/inode_info.hh"
 #include "fs/backend/link_file.hh"
 #include "fs/backend/metadata_log/entries.hh"
@@ -147,6 +148,10 @@ void shard::cut_out_data_range(inode_info::file& file, file_range range) {
         };
         visit_remains(left_remains);
         visit_remains(right_remains);
+
+        // TODO: empty clusters compaction: we could check here if updated cluster has no up-to-date data and is
+        //       read-only. If so we could schedule compaction of that cluster in order to immediately move it to
+        //       _cluster_allocator.
     });
 }
 
@@ -323,6 +328,21 @@ void shard::finish_writing_data_cluster(cluster_id_t cluster_id) {
     assert(!nh.empty());
     auto insert_res = _read_only_data_clusters.insert(std::move(nh));
     assert(insert_res.inserted);
+}
+
+void shard::make_data_cluster_writable(cluster_id_t cluster_id) {
+    auto nh = _read_only_data_clusters.extract(cluster_id);
+    assert(!nh.empty());
+    auto insert_res = _writable_data_clusters.insert(std::move(nh));
+    assert(insert_res.inserted);
+}
+
+void shard::free_writable_data_cluster(cluster_id_t cluster_id) noexcept {
+    auto num = _data_cluster_contents_info_map.erase(cluster_id);
+    assert(num == 1);
+    num = _writable_data_clusters.erase(cluster_id);
+    assert(num == 1);
+    _cluster_allocator.free(cluster_id);
 }
 
 void shard::schedule_flush_of_curr_cluster() {
@@ -634,6 +654,10 @@ future<size_t> shard::write(inode_t inode, file_offset_t pos, const void* buffer
 
 future<> shard::truncate(inode_t inode, file_offset_t size) {
     return truncate_operation::perform(*this, inode, size);
+}
+
+future<> shard::compact_data_clusters(std::vector<cluster_id_t> cluster_ids) {
+    return data_compaction::perform(*this, std::move(cluster_ids));
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,

@@ -70,6 +70,8 @@ class shard {
     cluster_id_t _log_cluster_count = 0;
     size_t _compacted_log_size = 0;
     std::unordered_map<cluster_id_t, data_cluster_contents_info*> _data_cluster_contents_info_map;
+    // TODO: maybe rename those to something more meaningful for compaction? like _enabled_for_compaction_data_clusters
+    //       and _disabled_from_compaction_data_clusters?
     std::unordered_map<cluster_id_t, data_cluster_contents_info> _writable_data_clusters;
     std::unordered_map<cluster_id_t, data_cluster_contents_info> _read_only_data_clusters;
 
@@ -183,6 +185,8 @@ class shard {
 
     friend class bootstrapping;
 
+    friend class data_compaction;
+
     friend class create_and_open_unlinked_file_operation;
     friend class create_file_operation;
     friend class link_file_operation;
@@ -226,6 +230,8 @@ private:
     void memory_only_delete_dentry(inode_info::directory& dir, const std::string& entry_name);
 
     void finish_writing_data_cluster(cluster_id_t cluster_id);
+    void make_data_cluster_writable(cluster_id_t cluster_id);
+    void free_writable_data_cluster(cluster_id_t cluster_id) noexcept;
 
     template<class Func> // TODO: use noncopyable_function
     void schedule_background_task(Func&& task) {
@@ -294,6 +300,8 @@ private:
 
     // It is safe for @p path to be a temporary (there is no need to worry about its lifetime)
     future<inode_t> path_lookup(const std::string& path) const;
+
+    future<> compact_data_clusters(std::vector<cluster_id_t> cluster_ids);
 
 public:
     template<class Func> // TODO: noncopyable_function
