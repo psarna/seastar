@@ -105,18 +105,40 @@ void shard::write_update(inode_info::file& file, inode_data_vec new_data_vec) {
     } else {
         cut_out_data_range(file, new_data_vec.data_range);
     }
-
     file.data.emplace(new_data_vec.data_range.beg, std::move(new_data_vec));
 }
 
 void shard::cut_out_data_range(inode_info::file& file, file_range range) {
-    file.cut_out_data_range(range, [](inode_data_vec data_vec) {
-        (void)data_vec; // TODO: for compaction: update used inode_data_vec
+    file.cut_out_data_range(range, [&](const inode_data_vec& former, const inode_data_vec& left_remains, const inode_data_vec& right_remains) {
+        // Remove former before adding remains
+        std::visit(overloaded {
+            [&](const inode_data_vec::in_mem_data&) {
+                _compacted_log_size -= mle::ondisk_size<mle::small_write>(former.data_range.size());
+            },
+            [&](const inode_data_vec::on_disk_data& disk_data) {
+                // TODO: Differentiate between large write and large write without mtime
+                _compacted_log_size -= (former.data_range.size() == _cluster_size ?
+                    mle::ondisk_size<mle::large_write>() :
+                    mle::ondisk_size<mle::medium_write>());
+            },
+            [&](const inode_data_vec::hole_data&) {
+            },
+        }, former.data_location);
     });
 }
 
 inode_info& shard::memory_only_create_inode(inode_t inode, unix_metadata metadata) {
     assert(_inodes.count(inode) == 0);
+    _compacted_log_size += mle::ondisk_size<mle::create_inode>();
+    switch (metadata.ftype) {
+    case file_type::DIRECTORY:
+        break;
+    case file_type::REGULAR_FILE:
+        // During rewrite we'll start with truncating the file to its final size to remember trailing holes
+        _compacted_log_size += mle::ondisk_size<mle::truncate>();
+        break;
+    }
+
     return _inodes.emplace(inode, inode_info{
         .opened_files_count = 0,
         .links_count = 0,
@@ -142,12 +164,17 @@ void shard::memory_only_delete_inode(inode_t inode) {
         [](const inode_info::directory& dir) {
             assert(dir.entries.empty());
         },
-        [](const inode_info::file&) {
-            // TODO: for compaction: update used inode_data_vec
+        [&](inode_info::file& file) {
+            cut_out_data_range(file, {
+                .beg = 0,
+                .end = std::numeric_limits<decltype(file_range::end)>::max()
+            });
+            _compacted_log_size -= mle::ondisk_size<mle::truncate>(); // See memory_only_create_inode() for why it is here
         }
     }, it->second.contents);
 
     _inodes.erase(it);
+    _compacted_log_size -= mle::ondisk_size<mle::create_inode>();
 }
 
 void shard::memory_only_small_write(inode_t inode, file_offset_t file_offset, temporary_buffer<uint8_t> data) {
@@ -158,15 +185,16 @@ void shard::memory_only_small_write(inode_t inode, file_offset_t file_offset, te
         },
         .data_location = inode_data_vec::in_mem_data{std::move(data)},
     };
-
     auto it = _inodes.find(inode);
     assert(it != _inodes.end());
     assert(it->second.is_file());
     write_update(it->second.get_file(), std::move(data_vec));
+    _compacted_log_size += mle::ondisk_size<mle::small_write>(data.size());
 }
 
 void shard::memory_only_disk_write(inode_t inode, file_offset_t file_offset, disk_offset_t disk_offset,
         size_t write_len) {
+    assert(write_len <= _cluster_size);
     inode_data_vec data_vec = {
         .data_range = {
             .beg = file_offset,
@@ -176,11 +204,13 @@ void shard::memory_only_disk_write(inode_t inode, file_offset_t file_offset, dis
             .device_offset = disk_offset
         },
     };
-
     auto it = _inodes.find(inode);
     assert(it != _inodes.end());
     assert(it->second.is_file());
     write_update(it->second.get_file(), std::move(data_vec));
+    _compacted_log_size += (write_len == _cluster_size ?
+        mle::ondisk_size<mle::large_write>() :
+        mle::ondisk_size<mle::medium_write>());
 }
 
 void shard::memory_only_update_mtime(inode_t inode, decltype(unix_metadata::mtime_ns) mtime_ns) {
@@ -226,6 +256,15 @@ void shard::memory_only_create_dentry(inode_info::directory& dir, inode_t entry_
     bool inserted = dir.entries.emplace(std::move(entry_name), entry_inode).second;
     assert(inserted);
     ++it->second.links_count;
+
+    if (it->second.links_count == 1) {
+        // We know that we'll write mle::create_inode_as_dentry (instead of mle::create_inode and ondisk_add_dir_entry)
+        // in rewrite log because the entry is linked for the first time
+        _compacted_log_size += mle::ondisk_size<mle::create_inode_as_dentry>(entry_name.size()) -
+            mle::ondisk_size<mle::create_inode>();
+    } else {
+        _compacted_log_size += mle::ondisk_size<mle::create_dentry>(entry_name.size());
+    }
 }
 
 void shard::memory_only_delete_dentry(inode_info::directory& dir, const std::string& entry_name) {
@@ -238,6 +277,14 @@ void shard::memory_only_delete_dentry(inode_info::directory& dir, const std::str
 
     --entry_it->second.links_count;
     dir.entries.erase(it);
+
+    if (__builtin_expect(entry_it->second.links_count == 0, false)) {
+        // We were going to write mle::create_inode_as_dentry in rewrite log but we can't anymore
+        _compacted_log_size -= mle::ondisk_size<mle::create_inode_as_dentry>(entry_name.size()) -
+            mle::ondisk_size<mle::create_inode>();
+    } else {
+        _compacted_log_size -= mle::ondisk_size<mle::create_dentry>(entry_name.size());
+    }
 }
 
 void shard::schedule_flush_of_curr_cluster() {
@@ -277,7 +324,7 @@ shard::flush_result shard::schedule_flush_of_curr_cluster_and_change_it_to_new_o
     auto next_cluster = _cluster_allocator.alloc();
     if (!next_cluster) {
         // Here shard dies, we cannot even flush current cluster because from there we won't be able to recover
-        // TODO: ^ add protection from it and take it into account during compaction
+        // TODO: ^ add protection from it
         return flush_result::NO_SPACE;
     }
 
@@ -285,6 +332,7 @@ shard::flush_result shard::schedule_flush_of_curr_cluster_and_change_it_to_new_o
         .cluster_id = *next_cluster
     });
     assert(append_res == metadata_log::to_disk_buffer::APPENDED);
+    ++_log_cluster_count;
     schedule_flush_of_curr_cluster();
 
     // Make next cluster the current cluster to allow writing next metadata entries before flushing finishes
