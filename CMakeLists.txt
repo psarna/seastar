@@ -685,6 +685,8 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/cluster_writer.hh
     src/fs/crc.hh
     src/fs/data_cluster_contents_info.hh
+    src/fs/data_compaction.cc
+    src/fs/data_compaction.hh
     src/fs/device_reader.cc
     src/fs/device_reader.hh
     src/fs/file.cc

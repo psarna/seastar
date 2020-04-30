@@ -45,7 +45,8 @@ struct inode_data_vec {
 
     struct hole_data { };
 
-    std::variant<in_mem_data, on_disk_data, hole_data> data_location;
+    using data_location_type = std::variant<in_mem_data, on_disk_data, hole_data>;
+    data_location_type data_location;
 
     // TODO: rename that function to something more suitable
     inode_data_vec share_copy() {
