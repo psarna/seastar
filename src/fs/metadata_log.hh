@@ -74,6 +74,10 @@ class metadata_log {
 
     void set_fs_read_only_mode(read_only_fs val) noexcept;
 
+    // Estimations of metadata log size used in compaction
+    cluster_id_t _log_cluster_count = 0;
+    size_t _compacted_log_size = 0;
+
     // Locks are used to ensure metadata consistency while allowing concurrent usage.
     //
     // Whenever one wants to create or delete inode or directory entry, one has to acquire appropriate unique lock for
@@ -163,9 +167,6 @@ class metadata_log {
 
     // TODO: for compaction: keep some set(?) of inode_data_vec, so that we can keep track of clusters that have lowest
     //       utilization (up-to-date data)
-    // TODO: for compaction: keep estimated metadata log size (that would take when written to disk) and
-    //       the real size of metadata log taken on disk to allow for detecting when compaction
-
     friend class metadata_log_bootstrap;
 
     friend class create_and_open_unlinked_file_operation;
