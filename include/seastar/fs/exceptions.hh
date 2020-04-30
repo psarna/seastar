@@ -92,6 +92,10 @@ struct read_only_filesystem_exception : public fs_exception {
     const char* what() const noexcept override { return "Read only file system"; }
 };
 
+struct input_output_exception : public fs_exception {
+    const char* what() const noexcept override { return "Input/output error"; }
+};
+
 struct path_lookup_exception : public fs_exception {
     const char* what() const noexcept override = 0;
 };
