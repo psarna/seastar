@@ -24,6 +24,7 @@
 #include "fs/cluster.hh"
 #include "fs/cluster_allocator.hh"
 #include "fs/cluster_writer.hh"
+#include "fs/data_cluster_contents_info.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
@@ -77,6 +78,9 @@ class metadata_log {
     // Estimations of metadata log size used in compaction
     cluster_id_t _log_cluster_count = 0;
     size_t _compacted_log_size = 0;
+    std::unordered_map<cluster_id_t, data_cluster_contents_info*> _data_cluster_contents_info_map;
+    std::unordered_map<cluster_id_t, data_cluster_contents_info> _writable_data_clusters;
+    std::unordered_map<cluster_id_t, data_cluster_contents_info> _read_only_data_clusters;
 
     // Locks are used to ensure metadata consistency while allowing concurrent usage.
     //
@@ -165,8 +169,6 @@ class metadata_log {
         }
     } _locks;
 
-    // TODO: for compaction: keep some set(?) of inode_data_vec, so that we can keep track of clusters that have lowest
-    //       utilization (up-to-date data)
     friend class metadata_log_bootstrap;
 
     friend class create_and_open_unlinked_file_operation;
@@ -210,6 +212,8 @@ private:
     void memory_only_truncate(inode_t inode, disk_offset_t size);
     void memory_only_add_dir_entry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name);
     void memory_only_delete_dir_entry(inode_info::directory& dir, std::string entry_name);
+
+    void finish_writing_data_cluster(cluster_id_t cluster_id);
 
     template<class Func>
     void schedule_background_task(Func&& task) {
