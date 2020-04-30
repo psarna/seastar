@@ -187,6 +187,13 @@ private:
                             // TODO: maybe we should return partial write instead of exception?
                             return make_exception_future<bool_class<stop_iteration_tag>>(no_more_space_exception());
                         }
+                        auto finished_cluster_offset = _metadata_log._curr_data_writer->current_disk_offset();
+                        auto finished_cluster_id = offset_to_cluster_id(finished_cluster_offset, _metadata_log._cluster_size);
+                        if (buff_bytes_left == 0) {
+                            // Our disk_offset is pointing at the start of the next cluster
+                            --finished_cluster_id;
+                        }
+                        _metadata_log.finish_writing_data_cluster(finished_cluster_id);
 
                         auto cluster_id = cluster_opt.value();
                         disk_offset_t cluster_disk_offset = cluster_id_to_offset(cluster_id, _metadata_log._cluster_size);
@@ -305,6 +312,7 @@ private:
                 return make_exception_future<size_t>(no_more_space_exception());
             case metadata_log::append_result::APPENDED:
                 _metadata_log.memory_only_disk_write(_inode, file_offset, cluster_disk_offset, write_len);
+                _metadata_log.finish_writing_data_cluster(cluster_id);
                 return make_ready_future<size_t>(write_len);
             }
             __builtin_unreachable();

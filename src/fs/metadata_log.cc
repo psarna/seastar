@@ -21,6 +21,7 @@
 
 #include "fs/cluster.hh"
 #include "fs/cluster_allocator.hh"
+#include "fs/data_cluster_contents_info.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
@@ -106,7 +107,6 @@ void metadata_log::set_fs_read_only_mode(read_only_fs val) noexcept {
 }
 
 void metadata_log::write_update(inode_info::file& file, inode_data_vec new_data_vec) {
-    // TODO: for compaction: update used inode_data_vec
     auto file_size = file.size();
     if (file_size < new_data_vec.data_range.beg) {
         file.data.emplace(file_size, inode_data_vec {
@@ -131,10 +131,33 @@ void metadata_log::cut_out_data_range(inode_info::file& file, file_range range) 
                 _compacted_log_size -= (former.data_range.size() == _cluster_size ?
                     ondisk_entry_size<ondisk_large_write>() :
                     ondisk_entry_size<ondisk_medium_write>());
+                auto it = _data_cluster_contents_info_map.find(offset_to_cluster_id(disk_data.device_offset, _cluster_size));
+                assert(it != _data_cluster_contents_info_map.end());
+                it->second->cut_data(disk_data.device_offset, former.data_range, left_remains.data_range, right_remains.data_range);
             },
             [&](const inode_data_vec::hole_data&) {
             },
         }, former.data_location);
+
+        auto visit_remains = [&](const inode_data_vec& data_vec) {
+            if (data_vec.data_range.is_empty()) {
+                return;
+            }
+            std::visit(overloaded {
+                [&](const inode_data_vec::in_mem_data&) {
+                    _compacted_log_size += ondisk_entry_size<ondisk_small_write_header>(data_vec.data_range.size());
+                },
+                [&](const inode_data_vec::on_disk_data& disk_data) {
+                    // Remaining data is smaller than original so it is not a large write anymore
+                    assert(data_vec.data_range.size() < _cluster_size);
+                    _compacted_log_size += ondisk_entry_size<ondisk_medium_write>();
+                },
+                [&](const inode_data_vec::hole_data&) {
+                },
+            }, data_vec.data_location);
+        };
+        visit_remains(left_remains);
+        visit_remains(right_remains);
     });
 }
 
@@ -208,6 +231,15 @@ void metadata_log::memory_only_disk_write(inode_t inode, file_offset_t file_offs
     _compacted_log_size += (write_len == _cluster_size ?
         ondisk_entry_size<ondisk_large_write>() :
         ondisk_entry_size<ondisk_medium_write>());
+    cluster_id_t cluster_id = offset_to_cluster_id(disk_offset, _cluster_size);
+    assert(_read_only_data_clusters.find(cluster_id) == _read_only_data_clusters.end());
+    auto [cc_info_it, created] = _writable_data_clusters.try_emplace(cluster_id);
+    auto& cc_info = cc_info_it->second;
+    cc_info.add_data(disk_offset, inode, {file_offset, file_offset + write_len});
+    if (created) {
+        auto [_, inserted] = _data_cluster_contents_info_map.try_emplace(cluster_id, &cc_info);
+        assert(inserted);
+    }
 }
 
 void metadata_log::memory_only_update_mtime(inode_t inode, decltype(unix_metadata::mtime_ns) mtime_ns) {
@@ -233,7 +265,6 @@ void metadata_log::memory_only_truncate(inode_t inode, file_offset_t size) {
             inode_data_vec::hole_data {}
         });
     } else {
-        // TODO: for compaction: update used inode_data_vec
         cut_out_data_range(file, {
             size,
             std::numeric_limits<decltype(file_range::end)>::max()
@@ -279,6 +310,13 @@ void metadata_log::memory_only_delete_dir_entry(inode_info::directory& dir, std:
     } else {
         _compacted_log_size -= ondisk_entry_size<ondisk_add_dir_entry_header>(entry_name.size());
     }
+}
+
+void metadata_log::finish_writing_data_cluster(cluster_id_t cluster_id) {
+    auto nh = _writable_data_clusters.extract(cluster_id);
+    assert(!nh.empty());
+    auto insert_res = _read_only_data_clusters.insert(std::move(nh));
+    assert(insert_res.inserted);
 }
 
 void metadata_log::schedule_flush_of_curr_cluster() {
