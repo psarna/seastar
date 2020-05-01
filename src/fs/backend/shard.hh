@@ -56,6 +56,15 @@ class shard {
 
     shared_ptr<Clock> _clock;
 
+    struct read_only_fs_tag { };
+    using read_only_fs = bool_class<read_only_fs_tag>;
+
+    read_only_fs _read_only_fs = read_only_fs::no;
+
+    void throw_if_read_only_fs();
+
+    void set_fs_read_only_mode(read_only_fs val) noexcept;
+
     // Locks are used to ensure metadata consistency while allowing concurrent usage.
     //
     // Whenever one wants to create or delete inode or directory entry, one has to acquire appropriate unique lock for
@@ -219,6 +228,8 @@ private:
 
     template<class Entry>
     [[nodiscard]] append_result append_metadata_log(const Entry& entry) {
+        throw_if_read_only_fs();
+
         using AR = append_result;
         // TODO: maybe check for errors on _background_futures to expose previous errors?
         switch (_metadata_log_cbuf->append(entry)) {

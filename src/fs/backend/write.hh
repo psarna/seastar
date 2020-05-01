@@ -174,6 +174,8 @@ private:
                     if (buff_bytes_left <= SMALL_WRITE_THRESHOLD) {
                         // TODO: add wasted buff_bytes_left bytes for compaction
                         // No space left in the current to_disk_buffer for medium write - allocate a new buffer
+
+                        _shard.throw_if_read_only_fs();
                         std::optional<cluster_id_t> cluster_opt = _shard._cluster_allocator.alloc();
                         if (!cluster_opt) {
                             // TODO: maybe we should return partial write instead of exception?
@@ -217,6 +219,8 @@ private:
         assert(aligned_expected_write_len % _shard._alignment == 0);
         assert(disk_buffer->bytes_left() >= aligned_expected_write_len);
 
+        _shard.throw_if_read_only_fs();
+
         disk_offset_t device_offset = disk_buffer->current_disk_offset();
         return disk_buffer->write(aligned_buffer, aligned_expected_write_len, _shard._device).then(
                 [this, file_offset, disk_buffer = std::move(disk_buffer), device_offset](size_t write_len) {
@@ -250,6 +254,9 @@ private:
 
     future<size_t> do_large_write(const uint8_t* aligned_buffer, file_offset_t file_offset, bool update_mtime) {
         assert(reinterpret_cast<uintptr_t>(aligned_buffer) % _shard._alignment == 0);
+
+        _shard.throw_if_read_only_fs();
+
         // aligned_expected_write_len = _shard._cluster_size
         std::optional<cluster_id_t> cluster_opt = _shard._cluster_allocator.alloc();
         if (!cluster_opt) {
@@ -261,7 +268,6 @@ private:
         return _shard._device.write(cluster_disk_offset, aligned_buffer, _shard._cluster_size, _pc).then(
                 [this, file_offset, cluster_id, cluster_disk_offset, update_mtime](size_t write_len) {
             if (write_len != _shard._cluster_size) {
-                _shard._cluster_allocator.free(cluster_id);
                 return make_ready_future<size_t>(0);
             }
 
@@ -289,16 +295,23 @@ private:
 
             switch (append_result) {
             case shard::append_result::TOO_BIG:
-                _shard._cluster_allocator.free(cluster_id);
                 return make_exception_future<size_t>(cluster_size_too_small_to_perform_operation_exception());
             case shard::append_result::NO_SPACE:
-                _shard._cluster_allocator.free(cluster_id);
                 return make_exception_future<size_t>(no_more_space_exception());
             case shard::append_result::APPENDED:
                 _shard.memory_only_disk_write(_inode, file_offset, cluster_disk_offset, write_len);
                 return make_ready_future<size_t>(write_len);
             }
             __builtin_unreachable();
+        }).then([this, cluster_id](size_t write_len) -> size_t {
+            if (write_len != _shard._cluster_size) {
+                _shard._cluster_allocator.free(cluster_id);
+                return 0;
+            }
+            return write_len;
+        }).handle_exception([this, cluster_id](std::exception_ptr ptr) {
+            _shard._cluster_allocator.free(cluster_id);
+            return make_exception_future<size_t>(std::move(ptr));
         });
     }
 

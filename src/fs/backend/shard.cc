@@ -80,6 +80,17 @@ future<> shard::shutdown() {
     });
 }
 
+void shard::throw_if_read_only_fs() {
+    if (__builtin_expect(_read_only_fs == read_only_fs::yes, false)) {
+        throw read_only_filesystem_exception();
+    }
+}
+
+void shard::set_fs_read_only_mode(read_only_fs val) noexcept {
+    mlogger.warn("Turned {} read-only mode.", val == read_only_fs::yes ? "on" : "off");
+    _read_only_fs = val;
+}
+
 void shard::write_update(inode_info::file& file, inode_data_vec new_data_vec) {
     // TODO: for compaction: update used inode_data_vec
     auto file_size = file.size();
@@ -230,28 +241,39 @@ void shard::memory_only_delete_dentry(inode_info::directory& dir, const std::str
 }
 
 void shard::schedule_flush_of_curr_cluster() {
+    throw_if_read_only_fs();
     // Make writes concurrent (TODO: maybe serialized within *one* cluster would be faster?)
-    schedule_background_task(do_with(_metadata_log_cbuf, &_device, [](auto& crr_clstr_bf, auto& device) {
-        return crr_clstr_bf->flush_to_disk(*device);
+    schedule_background_task(do_with(_metadata_log_cbuf, &_device, [this](auto& crr_clstr_bf, auto& device) {
+        throw_if_read_only_fs();
+        return crr_clstr_bf->flush_to_disk(*device).handle_exception([this](std::exception_ptr ptr) {
+            set_fs_read_only_mode(read_only_fs::yes);
+            return make_exception_future(std::move(ptr));
+        });
     }));
 }
 
 future<> shard::flush_curr_cluster() {
-    if (_metadata_log_cbuf->bytes_left_after_flush_if_done_now() == 0) {
-        switch (schedule_flush_of_curr_cluster_and_change_it_to_new_one()) {
-        case flush_result::NO_SPACE:
-            return make_exception_future(no_more_space_exception());
-        case flush_result::DONE:
-            break;
+    try {
+        if (_metadata_log_cbuf->bytes_left_after_flush_if_done_now() == 0) {
+            switch (schedule_flush_of_curr_cluster_and_change_it_to_new_one()) {
+            case flush_result::NO_SPACE:
+                return make_exception_future(no_more_space_exception());
+            case flush_result::DONE:
+                break;
+            }
+        } else {
+            schedule_flush_of_curr_cluster();
         }
-    } else {
-        schedule_flush_of_curr_cluster();
+    } catch(...) {
+        return seastar::make_exception_future(std::current_exception());
     }
 
     return _background_futures.get_future();
 }
 
 shard::flush_result shard::schedule_flush_of_curr_cluster_and_change_it_to_new_one() {
+    throw_if_read_only_fs();
+
     auto next_cluster = _cluster_allocator.alloc();
     if (!next_cluster) {
         // Here shard dies, we cannot even flush current cluster because from there we won't be able to recover
@@ -273,6 +295,7 @@ shard::flush_result shard::schedule_flush_of_curr_cluster_and_change_it_to_new_o
 }
 
 void shard::schedule_attempt_to_delete_inode(inode_t inode) {
+    throw_if_read_only_fs();
     return schedule_background_task([this, inode] {
         auto it = _inodes.find(inode);
         if (it == _inodes.end() || it->second.is_linked() || it->second.is_open()) {
