@@ -103,7 +103,7 @@ future<> metadata_log_bootstrap::bootstrap(cluster_id_t first_metadata_cluster_i
     }).then([this, fs_shards_pool_size, fs_shard_id] {
         // Initialize _cluser_allocator
         mlogger.debug("Initializing cluster allocator");
-        std::deque<cluster_id_t> free_clusters;
+        circular_buffer<cluster_id_t> free_clusters;
         for (auto cid : boost::irange(_available_clusters.beg, _available_clusters.end)) {
             if (_taken_clusters.count(cid) == 0) {
                 free_clusters.emplace_back(cid);
@@ -120,7 +120,7 @@ future<> metadata_log_bootstrap::bootstrap(cluster_id_t first_metadata_cluster_i
                 cluster_id_to_offset(datalog_cluster_id, _metadata_log._cluster_size));
 
         mlogger.debug("free clusters: {}", free_clusters.size());
-        _metadata_log._cluster_allocator = cluster_allocator(std::move(_taken_clusters), std::move(free_clusters));
+        _metadata_log._cluster_allocator.reset(std::move(_taken_clusters), std::move(free_clusters));
 
         // Reset _inode_allocator
         std::optional<inode_t> max_inode_no;
