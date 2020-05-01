@@ -87,6 +87,9 @@ struct file_has_been_closed_exception : public fs_exception {
 
 struct filesystem_has_not_been_invalidated_exception : public fs_exception {
     const char* what() const noexcept override { return "File system has not been invalidated"; }
+
+struct read_only_filesystem_exception : public fs_exception {
+    const char* what() const noexcept override { return "Read only file system"; }
 };
 
 struct path_lookup_exception : public fs_exception {

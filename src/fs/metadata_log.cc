@@ -53,6 +53,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
@@ -60,6 +61,10 @@
 #include <variant>
 
 namespace seastar::fs {
+
+namespace {
+logger mlogger("fs_metadata_log");
+} // namespace
 
 metadata_log::metadata_log(block_device device, uint32_t cluster_size, uint32_t alignment,
     shared_ptr<metadata_to_disk_buffer> cluster_buff, shared_ptr<cluster_writer> data_writer)
@@ -87,6 +92,17 @@ future<> metadata_log::shutdown() {
     return flush_log().then([this] {
         return _device.close();
     });
+}
+
+void metadata_log::throw_if_read_only_fs() {
+    if (__builtin_expect(_read_only_fs == read_only_fs::yes, false)) {
+        throw read_only_filesystem_exception();
+    }
+}
+
+void metadata_log::set_fs_read_only_mode(read_only_fs val) noexcept {
+    mlogger.warn("Turned {} read-only mode.", val == read_only_fs::yes ? "on" : "off");
+    _read_only_fs = val;
 }
 
 void metadata_log::write_update(inode_info::file& file, inode_data_vec new_data_vec) {
@@ -224,28 +240,39 @@ void metadata_log::memory_only_delete_dir_entry(inode_info::directory& dir, std:
 }
 
 void metadata_log::schedule_flush_of_curr_cluster() {
+    throw_if_read_only_fs();
     // Make writes concurrent (TODO: maybe serialized within *one* cluster would be faster?)
-    schedule_background_task(do_with(_curr_cluster_buff, &_device, [](auto& crr_clstr_bf, auto& device) {
-        return crr_clstr_bf->flush_to_disk(*device);
+    schedule_background_task(do_with(_curr_cluster_buff, &_device, [this](auto& crr_clstr_bf, auto& device) {
+        throw_if_read_only_fs();
+        return crr_clstr_bf->flush_to_disk(*device).handle_exception([this](std::exception_ptr ptr) {
+            set_fs_read_only_mode(read_only_fs::yes);
+            return make_exception_future(std::move(ptr));
+        });
     }));
 }
 
 future<> metadata_log::flush_curr_cluster() {
-    if (_curr_cluster_buff->bytes_left_after_flush_if_done_now() == 0) {
-        switch (schedule_flush_of_curr_cluster_and_change_it_to_new_one()) {
-        case flush_result::NO_SPACE:
-            return make_exception_future(no_more_space_exception());
-        case flush_result::DONE:
-            break;
+    try {
+        if (_curr_cluster_buff->bytes_left_after_flush_if_done_now() == 0) {
+            switch (schedule_flush_of_curr_cluster_and_change_it_to_new_one()) {
+            case flush_result::NO_SPACE:
+                return make_exception_future(no_more_space_exception());
+            case flush_result::DONE:
+                break;
+            }
+        } else {
+            schedule_flush_of_curr_cluster();
         }
-    } else {
-        schedule_flush_of_curr_cluster();
+    } catch(...) {
+        return seastar::make_exception_future(std::current_exception());
     }
 
     return _background_futures.get_future();
 }
 
 metadata_log::flush_result metadata_log::schedule_flush_of_curr_cluster_and_change_it_to_new_one() {
+    throw_if_read_only_fs();
+
     auto next_cluster = _cluster_allocator.alloc();
     if (not next_cluster) {
         // Here metadata log dies, we cannot even flush current cluster because from there we won't be able to recover
@@ -265,6 +292,7 @@ metadata_log::flush_result metadata_log::schedule_flush_of_curr_cluster_and_chan
 }
 
 void metadata_log::schedule_attempt_to_delete_inode(inode_t inode) {
+    throw_if_read_only_fs();
     return schedule_background_task([this, inode] {
         auto it = _inodes.find(inode);
         if (it == _inodes.end() or it->second.is_linked() or it->second.is_open()) {
