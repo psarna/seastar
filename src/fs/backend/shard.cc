@@ -51,7 +51,6 @@ shard::shard(block_device device, disk_offset_t cluster_size, disk_offset_t alig
 , _alignment(alignment)
 , _metadata_log_cbuf(std::move(metadata_log_cbuf))
 , _medium_data_log_cw(std::move(medium_data_log_cw))
-, _cluster_allocator({}, {})
 , _inode_allocator(1, 0)
 , _clock(std::move(clock)) {
     assert(is_power_of_2(alignment));
