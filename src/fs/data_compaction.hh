@@ -58,6 +58,13 @@ class data_compaction {
 
     future<> group_data_into_clusters(std::vector<compacted_data_vec> read_data_vecs);
 
+    future<> allocate_clusters(std::vector<std::vector<compacted_data_vec>> grouped_data_vecs,
+            std::vector<compacted_data_vec> memory_data_vecs);
+
+    future<> save_compacted_data_vecs(std::vector<cluster_id_t> comp_clusters_ids,
+            std::vector<std::vector<compacted_data_vec>> grouped_data_vecs,
+            std::vector<compacted_data_vec> memory_data_vecs);
+
     future<> write_ondisk_data_vecs(std::vector<compacted_data_vec> file_data_vecs);
 
     future<> write_memory_data_vecs(std::vector<compacted_data_vec> file_data_vecs);
