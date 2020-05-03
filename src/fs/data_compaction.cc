@@ -41,7 +41,7 @@
 namespace seastar::fs {
 
 namespace {
-logger mlogger("fs_compaction");
+logger mlogger("fs_data_compaction");
 } // namespace
 
 future<> data_compaction::compact() {
@@ -139,17 +139,19 @@ future<> data_compaction::group_data_into_clusters(std::vector<compacted_data_ve
         // but releasing clusters.
         bool should_add_new_group = true;
         size_t in_cluster_offset = 0;
+        // For now calculate offsets of new data vecs in clusters. We will calculate final on-disk offsets after
+        // clusters allocation.
         for (auto& file_data_vec : read_data_vecs) {
             size_t remaining_data_size = file_data_vec._data.size();
             size_t data_offset = 0;
             while (in_cluster_offset + remaining_data_size > _metadata_log._cluster_size) {
                 if (should_add_new_group) {
-                    grouped_data_vecs.emplace_back(std::vector<compacted_data_vec> {});
+                    grouped_data_vecs.push_back({});
                     should_add_new_group = false;
                 }
 
                 size_t part_size = _metadata_log._cluster_size - in_cluster_offset;
-                grouped_data_vecs.back().emplace_back(compacted_data_vec {
+                grouped_data_vecs.back().push_back({
                     ._data = file_data_vec._data.share(data_offset, part_size),
                     ._inode_id = file_data_vec._inode_id,
                     ._file_offset = file_data_vec._file_offset + data_offset,
@@ -170,7 +172,7 @@ future<> data_compaction::group_data_into_clusters(std::vector<compacted_data_ve
                         should_add_new_group = false;
                     }
 
-                    grouped_data_vecs.back().emplace_back(compacted_data_vec {
+                    grouped_data_vecs.back().push_back({
                         ._data = file_data_vec._data.share(data_offset, aligned_part_size),
                         ._inode_id = file_data_vec._inode_id,
                         ._file_offset = file_data_vec._file_offset + data_offset,
@@ -188,7 +190,7 @@ future<> data_compaction::group_data_into_clusters(std::vector<compacted_data_ve
                 }
                 if (remaining_data_size > 0) {
                     // TODO: Do we want to keep unaligned data in memory or leave it on disk?
-                    memory_data_vecs.emplace_back(compacted_data_vec {
+                    memory_data_vecs.push_back({
                         ._data = file_data_vec._data.share(data_offset, remaining_data_size),
                         ._inode_id = file_data_vec._inode_id,
                         ._file_offset = file_data_vec._file_offset + data_offset,
@@ -200,11 +202,15 @@ future<> data_compaction::group_data_into_clusters(std::vector<compacted_data_ve
         }
     }
 
+    return allocate_clusters(std::move(grouped_data_vecs), std::move(memory_data_vecs));
+}
+
+future<> data_compaction::allocate_clusters(std::vector<std::vector<compacted_data_vec>> grouped_data_vecs,
+        std::vector<compacted_data_vec> memory_data_vecs) {
     if (grouped_data_vecs.size() >= _compacted_cluster_ids.size()) {
         mlogger.warn("inefficient compaction: number of clusters passed for compaction: {}, number of clusters after compaction {} ",
             _compacted_cluster_ids.size(), grouped_data_vecs.size());
     }
-
     // Now allocate needed clusters and update offsets adding cluster beginning offset
     // TODO: we could first try to allocate clusters from shared cluster_allocater and if it fails wait for clusters
     //       from another (destined only for compactions) cluster_allocator
@@ -220,31 +226,37 @@ future<> data_compaction::group_data_into_clusters(std::vector<compacted_data_ve
             }
         }
 
-        // TODO: maybe do_for_each?
-        return parallel_for_each(boost::counting_iterator<size_t>(0), boost::counting_iterator<size_t>(cluster_ids.size()),
-                [this, grouped_data_vecs = std::move(grouped_data_vecs)](size_t i) mutable {
-            return write_ondisk_data_vecs(std::move(grouped_data_vecs[i]));
-        }).then([this, memory_data_vecs = std::move(memory_data_vecs)] () mutable { // TODO: maybe do write_*_data_vecs
-                                                                                    //       in parallel
-            return write_memory_data_vecs(std::move(memory_data_vecs));
-        }).handle_exception([](std::exception_ptr ptr) {
-            mlogger.warn("Exception occurred after cluster allocation.");
-            return make_exception_future(ptr);
-        }).finally([this, cluster_ids = std::move(cluster_ids)] {
-            for (auto& cluster_id : cluster_ids) {
-                auto cluster_it = _metadata_log._writable_data_clusters.find(cluster_id);
-                if (cluster_it == _metadata_log._writable_data_clusters.end()) {
-                    mlogger.debug("releasing free data cluster after compaction {}", cluster_id);
-                    _metadata_log._cluster_allocator.free(cluster_id);
-                } else if (cluster_it->second.is_empty()) {
-                    mlogger.debug("releasing free data cluster after compaction {}", cluster_id);
-                    _metadata_log.free_writable_data_cluster(cluster_id);
-                } else {
-                    // Mark that cluster is after compaction
-                    _metadata_log.finish_writing_data_cluster(cluster_id);
-                }
+        return save_compacted_data_vecs(std::move(cluster_ids), std::move(grouped_data_vecs), std::move(memory_data_vecs));
+    });
+}
+
+future<> data_compaction::save_compacted_data_vecs(std::vector<cluster_id_t> comp_clusters_ids,
+        std::vector<std::vector<compacted_data_vec>> grouped_data_vecs,
+        std::vector<compacted_data_vec> memory_data_vecs) {
+    // TODO: maybe do_for_each?
+    return parallel_for_each(boost::counting_iterator<size_t>(0), boost::counting_iterator<size_t>(comp_clusters_ids.size()),
+            [this, grouped_data_vecs = std::move(grouped_data_vecs)](size_t i) mutable {
+        return write_ondisk_data_vecs(std::move(grouped_data_vecs[i]));
+    }).then([this, memory_data_vecs = std::move(memory_data_vecs)] () mutable { // TODO: maybe do write_*_data_vecs
+                                                                                //       in parallel
+        return write_memory_data_vecs(std::move(memory_data_vecs));
+    }).handle_exception([](std::exception_ptr ptr) {
+        mlogger.warn("Exception occurred after cluster allocation.");
+        return make_exception_future(ptr);
+    }).finally([this, comp_clusters_ids = std::move(comp_clusters_ids)] {
+        for (auto& cluster_id : comp_clusters_ids) {
+            auto cluster_it = _metadata_log._writable_data_clusters.find(cluster_id);
+            if (cluster_it == _metadata_log._writable_data_clusters.end()) {
+                mlogger.debug("releasing free data cluster after compaction {}", cluster_id);
+                _metadata_log._cluster_allocator.free(cluster_id);
+            } else if (cluster_it->second.is_empty()) {
+                mlogger.debug("releasing free data cluster after compaction {}", cluster_id);
+                _metadata_log.free_writable_data_cluster(cluster_id);
+            } else {
+                // Mark that cluster is after compaction
+                _metadata_log.finish_writing_data_cluster(cluster_id);
             }
-        });
+        }
     });
 }
 
@@ -278,18 +290,15 @@ void data_compaction::update_previous_data_vecs(compacted_data_vec& comp_vec) {
         mlogger.debug("Inode {} deleted. Skipping data vec.", comp_vec._inode_id);
         return;
     }
-    if (inode_it->second.is_directory()) {
-        mlogger.warn("Inode {} is a directory. It is probably an error. Skipping data vec.", comp_vec._inode_id);
-        return;
-    }
+    assert(inode_it->second.is_file() && "Given inode doesn't refer to any file");
+
     inode_info& inode_info = inode_it->second;
     inode_info::file& file_info = inode_info.get_file();
 
     file_range comp_vec_range {comp_vec._file_offset, comp_vec._file_offset + comp_vec._data.size()};
 
     std::vector<inode_data_vec> prev_inode_vecs;
-    file_info.execute_on_data_range(comp_vec_range,
-            [&](inode_data_vec data_vec)  {
+    file_info.execute_on_data_range(comp_vec_range, [&](inode_data_vec data_vec)  {
         prev_inode_vecs.emplace_back(std::move(data_vec));
     });
     {
