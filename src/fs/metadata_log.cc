@@ -160,8 +160,9 @@ void metadata_log::cut_out_data_range(inode_info::file& file, file_range range) 
         visit_remains(left_remains);
         visit_remains(right_remains);
 
-        // TODO: empty clusters compaction: we can check here if data cluster is empty we won't write to that cluster.
-        //       Then we can schedule compaction of that cluster here.
+        // TODO: empty clusters compaction: we could check here if updated cluster has no up-to-date data and is
+        //       read-only. If so we could schedule compaction of that cluster in order to immediately move it to
+        //       _cluster_allocator.
     });
 }
 
