@@ -101,4 +101,13 @@ std::string root_entry(const std::string &path) {
     return path.substr(beg, end);
 }
 
+bool is_root_entry(const std::string& path) noexcept {
+    if (path.empty()) {
+        return false;
+    }
+    auto nb_slashes = std::count(path.begin(), path.end(), '/');
+    nb_slashes -= path.back() == '/'; // removing trailing slash
+    return nb_slashes == 1;
+}
+
 }
