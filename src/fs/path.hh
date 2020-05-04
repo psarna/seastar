@@ -39,8 +39,11 @@ inline std::string extract_last_component(std::string& path) {
     return res;
 }
 
-// Returns first non-root component.
+// Returns first non-root component. Path should be canonical.
 std::string root_entry(const std::string& path);
+
+// Path should be canonical.
+bool is_root_entry(const std::string& path) noexcept;
 
 std::string canonical(std::string path, std::string curr_dir = "/");
 
