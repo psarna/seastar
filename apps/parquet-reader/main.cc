@@ -96,9 +96,10 @@ int main(int argc, char *argv[]) {
             auto fr = file_reader::open(file).get0();
             int num_row_groups = fr.metadata().row_groups.size();
 
-            seastar::parallel_for_each(boost::counting_iterator<int>(0),
-               boost::counting_iterator<int>(num_row_groups),
-               [file_type, &fr](int r) {
+            for (int r = 0; r < num_row_groups; r++){
+//            seastar::parallel_for_each(boost::counting_iterator<int>(0),
+//               boost::counting_iterator<int>(num_row_groups),
+//               [file_type, &fr](int r) {
                    switch (file_type) {
                        case FileType::long_strings:readColumn<format::Type::BYTE_ARRAY>(fr, r, 0);
                            break;
@@ -221,9 +222,9 @@ int main(int argc, char *argv[]) {
 
                            break;
                    }
-                   return seastar::make_ready_future<>();
+//                   return seastar::make_ready_future<>();
                }
-            ).get();
+//            ).get();
         });
     });
     return 0;
