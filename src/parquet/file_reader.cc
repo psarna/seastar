@@ -150,7 +150,7 @@ file_reader::open_column_chunk_reader_internal(uint32_t row_group, uint32_t colu
                                  : column_metadata->data_page_offset;
 
             return column_chunk_reader<T>{
-                    page_reader{seastar::make_file_input_stream(f, file_offset, column_metadata->total_compressed_size)},
+                    page_reader{seastar::make_file_input_stream(f, file_offset, column_metadata->total_compressed_size, input_options)},
                     column_metadata->codec,
                     leaf.def_level,
                     leaf.rep_level,
