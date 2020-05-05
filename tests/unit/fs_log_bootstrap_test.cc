@@ -27,6 +27,7 @@
 
 #include "seastar/core/units.hh"
 #include "seastar/fs/block_device.hh"
+#include "seastar/fs/temporary_file.hh"
 #include "seastar/testing/thread_test_case.hh"
 #include "seastar/util/defer.hh"
 
@@ -36,6 +37,8 @@ using namespace fs;
 constexpr unit_size_t cluster_size = 1 * MB;
 constexpr unit_size_t alignment = 4 * KB;
 constexpr inode_t root_directory = 0;
+constexpr auto device_path = "/tmp/seastarfs";
+constexpr disk_offset_t device_size = 64 * MB;
 
 future<std::set<std::string>> get_entries_from_directory(metadata_log& log, std::string dir_path) {
     return async([&log, dir_path = std::move(dir_path)] {
@@ -82,5 +85,50 @@ SEASTAR_THREAD_TEST_CASE(create_dirs_and_bootstrap_test) {
 
         const auto entries = get_entries_from_directory(log, "/").get0();
         BOOST_REQUIRE_EQUAL(entries, control_directories);
+    }
+}
+
+SEASTAR_THREAD_TEST_CASE(create_file_write_and_bootstrap_test) {
+    BOOST_TEST_MESSAGE("\nTest name: " << get_name());
+    const std::string file_name = "file";
+    const auto tf = temporary_file(device_path);
+    tf.truncate(device_size * 2);
+    const bootstrap_record::shard_info shard_info({1, {1, device_size * 2 / alignment}});
+
+    {
+        block_device device = open_block_device(tf.path()).get0();
+        auto log = metadata_log(std::move(device), cluster_size, alignment);
+        auto close_log = defer([&log]() mutable { log.shutdown().get(); });
+        log.bootstrap(root_directory, shard_info.metadata_cluster, shard_info.available_clusters, 1, 0).get();
+
+        inode_t inode = log.create_and_open_file("/" + file_name, file_permissions::default_file_permissions).get0();
+        auto close_inode = defer([&log, inode] { log.close_file(inode).get(); });
+
+        parallel_for_each(boost::irange<unit_size_t>(0, device_size / alignment), [&log, inode](unit_size_t i) {
+            auto wbuf = allocate_aligned_buffer<uint8_t>(alignment, alignment);
+            std::fill(wbuf.get(), wbuf.get() + alignment, i);
+
+            return log.write(inode, i * alignment, wbuf.get(), alignment).then([](size_t ret) {
+                BOOST_REQUIRE_EQUAL(ret, alignment);
+            });
+        }).get();
+
+        log.flush_log().get();
+    }
+
+    {
+        block_device device = open_block_device(tf.path()).get0();
+        auto log = metadata_log(std::move(device), cluster_size, alignment);
+        auto close_log = defer([&log]() mutable { log.shutdown().get(); });
+        log.bootstrap(root_directory, shard_info.metadata_cluster, shard_info.available_clusters, 1, 0).get();
+
+        const auto entries = get_entries_from_directory(log, "/").get0();
+        BOOST_REQUIRE_EQUAL(entries.size(), 1);
+
+        inode_t inode = log.open_file("/" + file_name).get0();
+        auto close_inode = defer([&log, inode] { log.close_file(inode).get(); });
+
+        file_offset_t file_size = log.file_size(inode);
+        BOOST_REQUIRE_EQUAL(file_size, device_size);
     }
 }
