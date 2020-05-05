@@ -19,11 +19,16 @@
  * Copyright (C) 2020 ScyllaDB
  */
 
+#pragma once
+
 #include "seastar/core/future.hh"
 #include "seastar/core/sharded.hh"
 #include "seastar/core/shared_ptr.hh"
+//#include "seastar/fs/filesystem.hh"
 
 namespace seastar::fs {
+
+class filesystem;
 
 /* TODO: maybe we want sorted map here */
 using shared_entries = std::unordered_map<std::string, unsigned>;
@@ -47,12 +52,33 @@ public:
     void add_entries(shared_entries root_shard);
 };
 
+//class shared_root_impl {
+//public:
+//    virtual ~shared_root_impl() = default;
+//    virtual future<shared_entries> get_entries() = 0;
+//    virtual future<> remove_entry(std::string path) = 0;
+//    /* TODO: use bool_class idiom */
+//    virtual future<bool> try_add_entry(std::string path) = 0;
+//    virtual future<> add_entries(shared_entries entries) = 0;
+//};
+
+//class local_shared_root {
+//    lw_shared_ptr<shared_root> _shared_root;
+//public:
+//};
+
 /* TODO: split logic on local_shared_root and foreign_shared_root */
 class foreign_shared_root {
     foreign_ptr<lw_shared_ptr<shared_root>> _shared_root;
+    shared_entries _cache;
+    sharded<fs::filesystem>* _fs;
+    //fs::filesystem _fs;
 public:
     foreign_shared_root() = default;
     explicit foreign_shared_root(lw_shared_ptr<shared_root> root) : _shared_root(make_foreign(std::move(root))) {}
+    explicit foreign_shared_root(lw_shared_ptr<shared_root> root, sharded<seastar::fs::filesystem>& fs)
+    : _shared_root(make_foreign(std::move(root)))
+    , _fs(&fs) {}
 
     foreign_shared_root(const foreign_shared_root&) = delete;
     foreign_shared_root& operator=(const foreign_shared_root&) = delete;
@@ -67,6 +93,10 @@ public:
     future<bool> try_add_entry(std::string path);
 
     future<> add_entries(shared_entries entries);
+
+    shared_entries cache() {
+        return _cache;
+    }
 };
 
 }

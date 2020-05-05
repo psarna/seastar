@@ -183,6 +183,13 @@ future<shared_file_handle> filesystem::create_and_open_file_handler(std::string 
     }
 
     const auto entry = path::root_entry(path);
+    const bool is_entry = path::is_root_entry(path);
+
+    if (is_entry) {
+        // TODO: with_exclusive
+    } else {
+        // TODO: with_shared
+    }
 
     /* TODO: reduce copy-paste */
     /* TODO: add a read-write lock to synchronize operations on the current shard. */
