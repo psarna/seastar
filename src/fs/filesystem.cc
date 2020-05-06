@@ -54,7 +54,7 @@ void throw_if_not_absolute(const std::string& path) {
     }
 }
 
-future<> filesystem::start(std::string device_path, foreign_shared_root root) {
+future<> filesystem::start(std::string device_path, shared_root root) {
     return async([this, device_path = std::move(device_path), root = std::move(root)]() mutable {
         assert(thread::running_in_thread());
         _foreign_root = std::move(root);
@@ -272,12 +272,13 @@ future<bootstrap_record> make_bootstrap_record(uint64_t version, unit_size_t ali
 future<> bootfs(sharded<filesystem>& fs, std::string device_path) {
     return async([&fs, device_path = std::move(device_path)]() mutable {
         assert(thread::running_in_thread());
-        auto root = make_lw_shared<shared_root>();
+        auto root = make_lw_shared<global_shared_root>();
         fs.start().get();
 
-        /* Each shard should have own version of foreign_shared_root */
+        /* Each shard should have own version of shared_root */
         parallel_for_each(smp::all_cpus(), [&fs, device_path, root] (shard_id id) {
-            return fs.invoke_on(id, &filesystem::start, std::move(device_path), foreign_shared_root(root));
+            return fs.invoke_on(id, &filesystem::start, std::move(device_path),
+                shared_root(std::move(root), this_shard_id(), fs));
         }).get();
     });
 }

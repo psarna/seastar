@@ -32,7 +32,7 @@ namespace seastar::fs {
 
 class filesystem final : public peering_sharded_service<filesystem> {
     lw_shared_ptr<metadata_log> _metadata_log;
-    foreign_shared_root _foreign_root;
+    shared_root _foreign_root;
     shared_entries _cache_root;
     shared_mutex _lock; /* TODO use write-lock for remove and create, read-lock for open and list */
 public:
@@ -42,7 +42,7 @@ public:
     filesystem& operator=(const filesystem&) = delete;
     filesystem(filesystem&&) = default;
 
-    future<> start(std::string device_path, foreign_shared_root root);
+    future<> start(std::string device_path, shared_root root);
 
     future<shared_entries> local_root();
 
