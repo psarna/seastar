@@ -108,7 +108,7 @@ SEASTAR_THREAD_TEST_CASE(create_file_write_and_bootstrap_test) {
             auto wbuf = allocate_aligned_buffer<uint8_t>(alignment, alignment);
             std::fill(wbuf.get(), wbuf.get() + alignment, i);
 
-            return log.write(inode, i * alignment, wbuf.get(), alignment).then([](size_t ret) {
+            return log.write(inode, i * alignment, wbuf.get(), alignment).then([wbuf = std::move(wbuf)](size_t ret) {
                 BOOST_REQUIRE_EQUAL(ret, alignment);
             });
         }).get();

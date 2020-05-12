@@ -259,7 +259,7 @@ metadata_log::flush_result metadata_log::schedule_flush_of_curr_cluster_and_chan
     schedule_flush_of_curr_cluster();
 
     // Make next cluster the current cluster to allow writing next metadata entries before flushing finishes
-    _curr_cluster_buff->virtual_constructor();
+    _curr_cluster_buff = _curr_cluster_buff->virtual_constructor();
     _curr_cluster_buff->init(_cluster_size, _alignment,
             cluster_id_to_offset(*next_cluster, _cluster_size));
     return flush_result::DONE;
