@@ -675,6 +675,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/cluster_utils.hh
     src/fs/inode_utils.hh
     src/fs/temporary_file.hh
+    src/fs/val_or_err.hh
   )
 endif()
 
