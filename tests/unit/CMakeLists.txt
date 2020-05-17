@@ -392,6 +392,9 @@ if (Seastar_EXPERIMENTAL_FS)
     SOURCES
       fs_truncate_test.cc
       fs_mock_block_device.cc)
+  seastar_add_test (fs_val_or_err
+    KIND BOOST
+    SOURCES fs_val_or_err_test.cc)
   seastar_add_test (fs_write
     SOURCES
       fs_write_test.cc
