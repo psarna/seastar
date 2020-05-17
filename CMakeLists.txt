@@ -675,6 +675,8 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/unit_types.hh
     src/fs/backend/cluster_allocator.cc
     src/fs/backend/cluster_allocator.hh
+    src/fs/backend/metadata_log/entries.cc
+    src/fs/backend/metadata_log/entries.hh
     src/fs/bootstrap_record.cc
     src/fs/bootstrap_record.hh
     src/fs/cluster_utils.hh
@@ -682,6 +684,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/inode_utils.hh
     src/fs/path.hh
     src/fs/temporary_file.hh
+    src/fs/unix_metadata.hh
     src/fs/val_or_err.hh
   )
 endif()
