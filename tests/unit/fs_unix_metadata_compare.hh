@@ -16,33 +16,20 @@
  * under the License.
  */
 /*
- * Copyright (C) 2019 ScyllaDB
+ * Copyright (C) 2020 ScyllaDB
  */
 
 #pragma once
 
-#include "seastar/core/file-types.hh"
-
-#include <cstdint>
-#include <sys/types.h>
+#include "fs/unix_metadata.hh"
 
 namespace seastar::fs {
 
-enum class file_type : uint8_t {
-    REGULAR_FILE,
-    DIRECTORY,
-};
-
-using time_ns_t = uint64_t;
-
-struct unix_metadata {
-    file_type ftype;
-    file_permissions perms;
-    uid_t uid;
-    gid_t gid;
-    time_ns_t btime_ns;
-    time_ns_t mtime_ns;
-    time_ns_t ctime_ns;
-};
+constexpr bool operator==(const unix_metadata& a, const unix_metadata& b) noexcept {
+    return a.perms == b.perms && a.ftype == b.ftype  && a.uid == b.uid && a.gid == b.gid && a.btime_ns == b.btime_ns && a.mtime_ns == b.mtime_ns && a.ctime_ns == b.ctime_ns;
+}
+constexpr bool operator!=(const unix_metadata& a, const unix_metadata& b) noexcept {
+    return !(a == b);
+}
 
 } // namespace seastar::fs

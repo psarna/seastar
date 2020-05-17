@@ -696,6 +696,8 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/inode.hh
     src/fs/inode_info.hh
     src/fs/metadata_disk_entries.hh
+    src/fs/metadata_log/entries.cc
+    src/fs/metadata_log/entries.hh
     src/fs/metadata_to_disk_buffer.hh
     src/fs/path.hh
     src/fs/range.hh

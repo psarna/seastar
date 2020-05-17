@@ -377,6 +377,10 @@ if (Seastar_EXPERIMENTAL_FS)
     SOURCES
       fs_backend_shard_bootstrap_test.cc
       fs_mock_block_device.cc)
+  seastar_add_test (fs_metadata_log_entries
+    SOURCES
+      fs_metadata_log_entries_test.cc
+      fs_random.cc)
   seastar_add_test (fs_metadata_to_disk_buffer
     SOURCES
       fs_metadata_to_disk_buffer_test.cc

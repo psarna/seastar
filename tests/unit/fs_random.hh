@@ -16,33 +16,30 @@
  * under the License.
  */
 /*
- * Copyright (C) 2019 ScyllaDB
+ * Copyright (C) 2020 ScyllaDB
  */
 
 #pragma once
 
-#include "seastar/core/file-types.hh"
+#include "seastar/testing/test_runner.hh"
 
 #include <cstdint>
-#include <sys/types.h>
+#include <limits>
+#include <random>
+#include <type_traits>
 
 namespace seastar::fs {
 
-enum class file_type : uint8_t {
-    REGULAR_FILE,
-    DIRECTORY,
-};
+void random_overwrite(void* data, size_t len);
 
-using time_ns_t = uint64_t;
+template<class T, class U>
+auto random_value(T min_val, U max_val) {
+    return std::uniform_int_distribution<std::common_type_t<T, U>>(min_val, max_val)(testing::local_random_engine);
+}
 
-struct unix_metadata {
-    file_type ftype;
-    file_permissions perms;
-    uid_t uid;
-    gid_t gid;
-    time_ns_t btime_ns;
-    time_ns_t mtime_ns;
-    time_ns_t ctime_ns;
-};
+template<class T>
+auto random_value() {
+    return random_value(std::numeric_limits<T>::min(), std::numeric_limits<T>::max());
+}
 
 } // namespace seastar::fs
