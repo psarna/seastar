@@ -24,7 +24,7 @@
 #include "fs/backend/shard.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
-#include "fs/metadata_disk_entries.hh"
+#include "fs/metadata_log/entries.hh"
 #include "fs/units.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
@@ -58,15 +58,14 @@ class truncate_operation {
     }
 
     future<> do_truncate(file_offset_t size) {
-        using namespace std::chrono;
-        uint64_t curr_time_ns = duration_cast<nanoseconds>(system_clock::now().time_since_epoch()).count();
-        ondisk_truncate ondisk_entry {
-            _inode,
-            size,
-            curr_time_ns
+        auto curr_time_ns = _shard._clock->current_time_ns();
+        metadata_log::entries::truncate entry = {
+            .inode = _inode,
+            .size = size,
+            .time_ns = curr_time_ns,
         };
 
-        switch (_shard.append_ondisk_entry(ondisk_entry)) {
+        switch (_shard.append_metadata_log(entry)) {
         case shard::append_result::TOO_BIG:
             return make_exception_future(cluster_size_too_small_to_perform_operation_exception());
         case shard::append_result::NO_SPACE:

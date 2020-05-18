@@ -22,27 +22,32 @@
 #pragma once
 
 #include "fs/cluster_writer.hh"
-
-#include <seastar/core/shared_ptr.hh>
-#include <seastar/core/temporary_buffer.hh>
-#include <seastar/fs/block_device.hh>
+#include "seastar/core/shared_ptr.hh"
+#include "seastar/core/temporary_buffer.hh"
+#include "seastar/core/weak_ptr.hh"
+#include "seastar/fs/block_device.hh"
+#include "temporary_buffer_print.hh"
 
 #include <cassert>
 #include <cstdlib>
+#include <ostream>
+#include <string_view>
 #include <vector>
 
 namespace seastar::fs {
 
-class mock_cluster_writer : public cluster_writer {
+class cluster_writer_mocker : public cluster_writer {
 public:
-    mock_cluster_writer() = default;
-
     // A container with all the writers created by virtual_constructor
-    inline static thread_local std::vector<shared_ptr<mock_cluster_writer>> virtually_constructed_writers;
+    std::vector<shared_ptr<cluster_writer_mocker>>* all_writers;
+
+    explicit cluster_writer_mocker(decltype(all_writers) all_writers) : all_writers(all_writers) {}
 
     shared_ptr<cluster_writer> virtual_constructor() const override {
-        auto new_writer = make_shared<mock_cluster_writer>();
-        virtually_constructed_writers.emplace_back(new_writer);
+        auto new_writer = seastar::make_shared<cluster_writer_mocker>(all_writers);
+        if (all_writers) {
+            all_writers->emplace_back(new_writer);
+        }
         return new_writer;
     }
 
@@ -72,7 +77,17 @@ public:
 
         return device.write(_cluster_beg_offset + curr_write_offset, aligned_buffer, aligned_len);
     }
-
 };
+
+inline bool operator==(const cluster_writer_mocker::write_to_device& a, const cluster_writer_mocker::write_to_device& b) {
+    return a.disk_offset == b.disk_offset && a.data == b.data;
+}
+
+inline std::ostream& operator<<(std::ostream& os, const cluster_writer_mocker::write_to_device& x) {
+    os << "{disk_offset=" << x.disk_offset;
+    os << ",data.size()=" << x.data.size();
+    os << ",data=" << x.data;
+    return os << '}';
+}
 
 } // namespace seastar::fs

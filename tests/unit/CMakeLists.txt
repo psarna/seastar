@@ -366,49 +366,58 @@ if (Seastar_EXPERIMENTAL_FS)
   seastar_add_app_test (fs_block_device
     SOURCES fs_block_device_test.cc
     LIBRARIES seastar_testing)
-  seastar_add_test (fs_bootstrap_record
-    SOURCES
-      fs_bootstrap_record_test.cc
-      fs_mock_block_device.cc)
-  seastar_add_test (fs_cluster_allocator
-    KIND BOOST
-    SOURCES fs_cluster_allocator_test.cc)
   seastar_add_test (fs_backend_shard_bootstrap
     SOURCES
       fs_backend_shard_bootstrap_test.cc
-      fs_mock_block_device.cc)
+      fs_backend_shard_tester.cc
+      fs_block_device_mocker.cc)
+  seastar_add_test (fs_bootstrap_record
+    SOURCES
+      fs_block_device_mocker.cc
+      fs_bootstrap_record_test.cc)
+  seastar_add_test (fs_cluster_allocator
+    KIND BOOST
+    SOURCES fs_cluster_allocator_test.cc)
   seastar_add_test (fs_metadata_log_entries
     SOURCES
       fs_metadata_log_entries_test.cc
       fs_random.cc)
-  seastar_add_test (fs_metadata_to_disk_buffer
+  seastar_add_test (fs_metadata_log_to_disk_buffer
     SOURCES
-      fs_metadata_to_disk_buffer_test.cc
-      fs_mock_block_device.cc)
-  seastar_add_test (fs_mock_metadata_to_disk_buffer
+      fs_block_device_mocker.cc
+      fs_metadata_log_entries_random.cc
+      fs_metadata_log_to_disk_buffer_test.cc
+      fs_random.cc)
+  seastar_add_test (fs_metadata_log_to_disk_buffer_mocker
     SOURCES
-      fs_mock_metadata_to_disk_buffer_test.cc
-      fs_mock_block_device.cc)
+      fs_block_device_mocker.cc
+      fs_metadata_log_entries_random.cc
+      fs_metadata_log_to_disk_buffer_mocker_test.cc
+      fs_random.cc)
   seastar_add_test (fs_path
     KIND BOOST
     SOURCES fs_path_test.cc)
   seastar_add_test (fs_truncate
     SOURCES
-      fs_truncate_test.cc
-      fs_mock_block_device.cc)
+      fs_backend_shard_tester.cc
+      fs_block_device_mocker.cc
+      fs_random.cc
+      fs_truncate_test.cc)
   seastar_add_test (fs_val_or_err
     KIND BOOST
     SOURCES fs_val_or_err_test.cc)
   seastar_add_test (fs_write
     SOURCES
-      fs_write_test.cc
-      fs_mock_block_device.cc)
+      fs_backend_shard_tester.cc
+      fs_block_device_mocker.cc
+      fs_random.cc
+      fs_write_test.cc)
   seastar_add_test (fs_seastarfs
     SOURCES fs_seastarfs_test.cc)
   seastar_add_test (fs_to_disk_buffer
     SOURCES
-      fs_to_disk_buffer_test.cc
-      fs_mock_block_device.cc)
+      fs_block_device_mocker.cc
+      fs_to_disk_buffer_test.cc)
 endif()
 
 seastar_add_test (semaphore

@@ -26,7 +26,7 @@
 #include "fs/cluster.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
-#include "fs/metadata_disk_entries.hh"
+#include "fs/metadata_log/entries.hh"
 #include "fs/units.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
@@ -38,7 +38,7 @@ namespace seastar::fs::backend {
 class write_operation {
 public:
     // TODO: decide about threshold for small write
-    static constexpr size_t SMALL_WRITE_THRESHOLD = std::numeric_limits<decltype(ondisk_small_write_header::length)>::max();
+    static constexpr size_t SMALL_WRITE_THRESHOLD = metadata_log::entries::small_write::data_max_len;
 
 private:
     shard& _shard;
@@ -122,29 +122,22 @@ private:
         });
     }
 
-    static decltype(unix_metadata::mtime_ns) get_current_time_ns() {
-        using namespace std::chrono;
-        return duration_cast<nanoseconds>(system_clock::now().time_since_epoch()).count();
-    }
-
     future<size_t> do_small_write(const uint8_t* buffer, size_t expected_write_len, file_offset_t file_offset) {
-        auto curr_time_ns = get_current_time_ns();
-        ondisk_small_write_header ondisk_entry {
-            _inode,
-            file_offset,
-            static_cast<decltype(ondisk_small_write_header::length)>(expected_write_len),
-            curr_time_ns
+        metadata_log::entries::small_write entry = {
+            .inode = _inode,
+            .offset = file_offset,
+            .time_ns = _shard._clock->current_time_ns(),
+            .data = temporary_buffer<uint8_t>(buffer, expected_write_len),
         };
 
-        switch (_shard.append_ondisk_entry(ondisk_entry, buffer)) {
+        switch (_shard.append_metadata_log(entry)) {
         case shard::append_result::TOO_BIG:
             return make_exception_future<size_t>(cluster_size_too_small_to_perform_operation_exception());
         case shard::append_result::NO_SPACE:
             return make_exception_future<size_t>(no_more_space_exception());
         case shard::append_result::APPENDED:
-            temporary_buffer<uint8_t> tmp_buffer(buffer, expected_write_len);
-            _shard.memory_only_small_write(_inode, file_offset, std::move(tmp_buffer));
-            _shard.memory_only_update_mtime(_inode, curr_time_ns);
+            _shard.memory_only_small_write(_inode, file_offset, std::move(entry.data));
+            _shard.memory_only_update_mtime(_inode, entry.time_ns);
             return make_ready_future<size_t>(expected_write_len);
         }
         __builtin_unreachable();
@@ -232,23 +225,24 @@ private:
             // On partial write return aligned write length
             write_len = round_down_to_multiple_of_power_of_2(write_len, _shard._alignment);
 
-            auto curr_time_ns = get_current_time_ns();
-            ondisk_medium_write ondisk_entry {
-                _inode,
-                file_offset,
-                device_offset,
-                static_cast<decltype(ondisk_medium_write::length)>(write_len),
-                curr_time_ns
+            metadata_log::entries::medium_write entry = {
+                .inode = _inode,
+                .offset = file_offset,
+                .drange = {
+                    .beg = device_offset,
+                    .end = device_offset + write_len,
+                },
+                .time_ns = _shard._clock->current_time_ns(),
             };
 
-            switch (_shard.append_ondisk_entry(ondisk_entry)) {
+            switch (_shard.append_metadata_log(entry)) {
             case shard::append_result::TOO_BIG:
                 return make_exception_future<size_t>(cluster_size_too_small_to_perform_operation_exception());
             case shard::append_result::NO_SPACE:
                 return make_exception_future<size_t>(no_more_space_exception());
             case shard::append_result::APPENDED:
                 _shard.memory_only_disk_write(_inode, file_offset, device_offset, write_len);
-                _shard.memory_only_update_mtime(_inode, curr_time_ns);
+                _shard.memory_only_update_mtime(_inode, entry.time_ns);
                 return make_ready_future<size_t>(write_len);
             }
             __builtin_unreachable();
@@ -272,26 +266,26 @@ private:
                 return make_ready_future<size_t>(0);
             }
 
+            namespace mle = metadata_log::entries;
             shard::append_result append_result;
-            if (update_mtime) {
-                auto curr_time_ns = get_current_time_ns();
-                ondisk_large_write ondisk_entry {
-                    _inode,
-                    file_offset,
-                    cluster_id,
-                    curr_time_ns
+            {
+                mle::large_write_without_time lwwt = {
+                    .inode = _inode,
+                    .offset = file_offset,
+                    .data_cluster = cluster_id,
                 };
-                append_result = _shard.append_ondisk_entry(ondisk_entry);
-                if (append_result == shard::append_result::APPENDED) {
-                    _shard.memory_only_update_mtime(_inode, curr_time_ns);
+                if (update_mtime) {
+                    mle::large_write entry = {
+                        .lwwt = lwwt,
+                        .time_ns = _shard._clock->current_time_ns(),
+                    };
+                    append_result = _shard.append_metadata_log(entry);
+                    if (append_result == shard::append_result::APPENDED) {
+                        _shard.memory_only_update_mtime(_inode, entry.time_ns);
+                    }
+                } else {
+                    append_result = _shard.append_metadata_log(lwwt);
                 }
-            } else {
-                ondisk_large_write_without_mtime ondisk_entry {
-                    _inode,
-                    file_offset,
-                    cluster_id
-                };
-                append_result = _shard.append_ondisk_entry(ondisk_entry);
             }
 
             switch (append_result) {

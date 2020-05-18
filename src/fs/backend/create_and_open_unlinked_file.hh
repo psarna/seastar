@@ -22,7 +22,8 @@
 #pragma once
 
 #include "fs/backend/shard.hh"
-#include "fs/metadata_disk_entries.hh"
+#include "fs/metadata_log/entries.hh"
+#include "fs/unix_metadata.hh"
 #include "seastar/core/future.hh"
 
 namespace seastar::fs::backend {
@@ -33,34 +34,31 @@ class create_and_open_unlinked_file_operation {
     create_and_open_unlinked_file_operation(shard& shard) : _shard(shard) {}
 
     future<inode_t> create_and_open_unlinked_file(file_permissions perms) {
-        using namespace std::chrono;
-        uint64_t curr_time_ns = duration_cast<nanoseconds>(system_clock::now().time_since_epoch()).count();
-        unix_metadata unx_mtdt = {
-            file_type::REGULAR_FILE,
-            perms,
-            0, // TODO: Eventually, we'll want a user to be able to pass his credentials when bootstrapping the
-            0, //       file system -- that will allow us to authorize users on startup (e.g. via LDAP or whatnot).
-            curr_time_ns,
-            curr_time_ns,
-            curr_time_ns
+        auto curr_time_ns = _shard._clock->current_time_ns();
+        namespace mle = metadata_log::entries;
+        mle::create_inode entry = {
+            .inode = _shard._inode_allocator.alloc(), // TODO: maybe do something if it fails (overflows)
+            .metadata = {
+                .ftype = file_type::REGULAR_FILE,
+                .perms = perms,
+                .uid = 0, // TODO: Eventually, we'll want a user to be able to pass his credentials when bootstrapping the
+                .gid = 0, //       file system -- that will allow us to authorize users on startup (e.g. via LDAP or whatnot).
+                .btime_ns = curr_time_ns,
+                .mtime_ns = curr_time_ns,
+                .ctime_ns = curr_time_ns,
+            }
         };
 
-        inode_t new_inode = _shard._inode_allocator.alloc();
-        ondisk_create_inode ondisk_entry {
-            new_inode,
-            metadata_to_ondisk_metadata(unx_mtdt)
-        };
-
-        switch (_shard.append_ondisk_entry(ondisk_entry)) {
+        switch (_shard.append_metadata_log(entry)) {
         case shard::append_result::TOO_BIG:
             return make_exception_future<inode_t>(cluster_size_too_small_to_perform_operation_exception());
         case shard::append_result::NO_SPACE:
             return make_exception_future<inode_t>(no_more_space_exception());
         case shard::append_result::APPENDED:
-            inode_info& new_inode_info = _shard.memory_only_create_inode(new_inode, unx_mtdt);
+            inode_info& new_inode_info = _shard.memory_only_create_inode(entry.inode, entry.metadata);
             // We don't have to lock, as there was no context switch since the allocation of the inode number
             ++new_inode_info.opened_files_count;
-            return make_ready_future<inode_t>(new_inode);
+            return make_ready_future<inode_t>(entry.inode);
         }
         __builtin_unreachable();
     }

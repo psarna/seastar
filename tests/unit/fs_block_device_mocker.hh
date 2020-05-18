@@ -21,23 +21,29 @@
 
 #pragma once
 
-#include <cstring>
 #include <seastar/fs/block_device.hh>
+#include <string>
 
 namespace seastar::fs {
 
-class mock_block_device_impl : public block_device_impl {
+class block_device_mocker_impl : public block_device_impl {
 public:
-    using buf_type = basic_sstring<uint8_t, size_t, 32, false>;
-    buf_type buf;
-    ~mock_block_device_impl() override = default;
+    using buf_type = std::basic_string<uint8_t>;
 
+    size_t alignment;
+    buf_type buf;
     struct write_operation {
         uint64_t disk_offset;
         temporary_buffer<uint8_t> data;
     };
 
     std::vector<write_operation> writes;
+
+    ~block_device_mocker_impl() override = default;
+
+    block_device_mocker_impl() = delete;
+
+    explicit block_device_mocker_impl(size_t alignment) : alignment(alignment) {}
 
     future<size_t> write(uint64_t pos, const void* buffer, size_t len, const io_priority_class&) override;
 
@@ -52,4 +58,8 @@ public:
     }
 };
 
-} // seastar::fs
+inline block_device block_device_mocker(size_t alignment) {
+    return block_device(make_shared<block_device_mocker_impl>(alignment));
+}
+
+} // namespace seastar::fs

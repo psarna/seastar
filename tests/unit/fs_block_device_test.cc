@@ -36,7 +36,7 @@
 using namespace seastar;
 using namespace seastar::fs;
 
-constexpr off_t min_device_size = 16*MB;
+constexpr off_t min_device_size = 1*MB;
 constexpr size_t alignment = 4*KB;
 
 static future<temporary_buffer<char>> allocate_random_aligned_buffer(size_t size) {
@@ -77,7 +77,7 @@ static future<> test_basic_read_write(const std::string& device_path) {
 static future<> test_parallel_read_write(const std::string& device_path) {
     return async([&] {
         block_device dev = open_block_device(device_path).get0();
-        constexpr size_t buff_size = 16*MB;
+        constexpr size_t buff_size = 1*MB;
         auto buffer = allocate_random_aligned_buffer(buff_size).get0();
 
         // Write
@@ -107,7 +107,7 @@ static future<> test_parallel_read_write(const std::string& device_path) {
 static future<> test_simultaneous_parallel_read_and_write(const std::string& device_path) {
     return async([&] {
         block_device dev = open_block_device(device_path).get0();
-        constexpr size_t buff_size = 16*MB;
+        constexpr size_t buff_size = 1*MB;
         auto buffer = allocate_random_aligned_buffer(buff_size).get0();
         assert(dev.write(0, buffer.get(), buff_size).get0() == buff_size);
 
@@ -169,7 +169,7 @@ static future<> prepare_file(const std::string& file_path) {
         file dev = open_file_dma(file_path, open_flags::rw | open_flags::create).get0();
 
         auto st = dev.stat().get0();
-        if (S_ISREG(st.st_mode) and st.st_size < min_device_size) {
+        if (S_ISREG(st.st_mode) && st.st_size < min_device_size) {
             dev.truncate(min_device_size).get0();
         }
 
@@ -196,7 +196,7 @@ int main(int argc, char** argv) {
                 return tmp_device_file->path();
             }();
 
-            assert(not device_path.empty());
+            assert(!device_path.empty());
             prepare_file(device_path).get0();
             test_basic_read_write(device_path).get0();
             test_parallel_read_write(device_path).get0();

@@ -22,22 +22,24 @@
 #include "fs/bootstrap_record.hh"
 #include "fs/cluster.hh"
 #include "fs/crc.hh"
-#include "fs_mock_block_device.hh"
+#include "fs_block_device_mocker.hh"
+#include "seastar/core/print.hh"
+#include "seastar/fs/block_device.hh"
+#include "seastar/testing/test_case.hh"
+#include "seastar/testing/test_runner.hh"
+#include "seastar/testing/thread_test_case.hh"
 
 #include <boost/crc.hpp>
 #include <cstring>
-#include <seastar/core/print.hh>
-#include <seastar/fs/block_device.hh>
-#include <seastar/testing/test_case.hh>
-#include <seastar/testing/test_runner.hh>
-#include <seastar/testing/thread_test_case.hh>
 
 using namespace seastar;
 using namespace seastar::fs;
 
 namespace {
 
-inline std::vector<bootstrap_record::shard_info> prepare_valid_shards_info(uint32_t size) {
+constexpr size_t alignment = bootstrap_record::min_alignment;
+
+inline std::vector<bootstrap_record::shard_info> prepare_valid_shards_info(size_t size) {
     std::vector<bootstrap_record::shard_info> ret(size);
     cluster_id_t curr = 1;
     for (bootstrap_record::shard_info& info : ret) {
@@ -48,24 +50,24 @@ inline std::vector<bootstrap_record::shard_info> prepare_valid_shards_info(uint3
     return ret;
 };
 
-inline void repair_crc32(shared_ptr<mock_block_device_impl> dev_impl) noexcept {
-    mock_block_device_impl::buf_type& buff = dev_impl.get()->buf;
+inline void repair_crc32(shared_ptr<block_device_mocker_impl> dev_impl) noexcept {
+    block_device_mocker_impl::buf_type& buff = dev_impl.get()->buf;
     constexpr size_t crc_pos = offsetof(bootstrap_record_disk, crc);
     const uint32_t crc_new = crc32(buff.data(), crc_pos);
     std::memcpy(buff.data() + crc_pos, &crc_new, sizeof(crc_new));
 }
 
-inline void change_byte_at_offset(shared_ptr<mock_block_device_impl> dev_impl, size_t offset) noexcept {
+inline void change_byte_at_offset(shared_ptr<block_device_mocker_impl> dev_impl, size_t offset) noexcept {
     dev_impl.get()->buf[offset] ^= 1;
 }
 
 template<typename T>
-inline void place_at_offset(shared_ptr<mock_block_device_impl> dev_impl, size_t offset, T value) noexcept {
+inline void place_at_offset(shared_ptr<block_device_mocker_impl> dev_impl, size_t offset, T value) noexcept {
     std::memcpy(dev_impl.get()->buf.data() + offset, &value, sizeof(value));
 }
 
 template<>
-inline void place_at_offset(shared_ptr<mock_block_device_impl> dev_impl, size_t offset,
+inline void place_at_offset(shared_ptr<block_device_mocker_impl> dev_impl, size_t offset,
         std::vector<bootstrap_record::shard_info> shards_info) noexcept {
     bootstrap_record::shard_info shards_info_disk[bootstrap_record::max_shards_nb];
     std::memset(shards_info_disk, 0, sizeof(shards_info_disk));
@@ -88,7 +90,7 @@ const bootstrap_record default_write_record(1, bootstrap_record::min_alignment *
 BOOST_TEST_DONT_PRINT_LOG_VALUE(bootstrap_record)
 
 SEASTAR_THREAD_TEST_CASE(valid_basic_test) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
+    auto dev_impl = make_shared<block_device_mocker_impl>(alignment);
     block_device dev(dev_impl);
     const bootstrap_record write_record = default_write_record;
 
@@ -98,7 +100,7 @@ SEASTAR_THREAD_TEST_CASE(valid_basic_test) {
 }
 
 SEASTAR_THREAD_TEST_CASE(valid_max_shards_nb_test) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
+    auto dev_impl = make_shared<block_device_mocker_impl>(alignment);
     block_device dev(dev_impl);
     bootstrap_record write_record = default_write_record;
     write_record.shards_info = prepare_valid_shards_info(bootstrap_record::max_shards_nb);
@@ -109,7 +111,7 @@ SEASTAR_THREAD_TEST_CASE(valid_max_shards_nb_test) {
 }
 
 SEASTAR_THREAD_TEST_CASE(valid_one_shard_test) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
+    auto dev_impl = make_shared<block_device_mocker_impl>(alignment);
     block_device dev(dev_impl);
     bootstrap_record write_record = default_write_record;
     write_record.shards_info = prepare_valid_shards_info(1);
@@ -122,7 +124,7 @@ SEASTAR_THREAD_TEST_CASE(valid_one_shard_test) {
 
 
 SEASTAR_THREAD_TEST_CASE(invalid_crc_read) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
+    auto dev_impl = make_shared<block_device_mocker_impl>(alignment);
     block_device dev(dev_impl);
     const bootstrap_record write_record = default_write_record;
 
@@ -137,7 +139,7 @@ SEASTAR_THREAD_TEST_CASE(invalid_crc_read) {
 }
 
 SEASTAR_THREAD_TEST_CASE(invalid_magic_read) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
+    auto dev_impl = make_shared<block_device_mocker_impl>(alignment);
     block_device dev(dev_impl);
     const bootstrap_record write_record = default_write_record;
 
@@ -153,7 +155,7 @@ SEASTAR_THREAD_TEST_CASE(invalid_magic_read) {
 }
 
 SEASTAR_THREAD_TEST_CASE(invalid_shards_info_read) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
+    auto dev_impl = make_shared<block_device_mocker_impl>(alignment);
     block_device dev(dev_impl);
     const bootstrap_record write_record = default_write_record;
 
@@ -247,7 +249,7 @@ SEASTAR_THREAD_TEST_CASE(invalid_shards_info_read) {
 }
 
 SEASTAR_THREAD_TEST_CASE(invalid_alignment_read) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
+    auto dev_impl = make_shared<block_device_mocker_impl>(alignment);
     block_device dev(dev_impl);
     const bootstrap_record write_record = default_write_record;
 
@@ -273,7 +275,7 @@ SEASTAR_THREAD_TEST_CASE(invalid_alignment_read) {
 }
 
 SEASTAR_THREAD_TEST_CASE(invalid_cluster_size_read) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
+    auto dev_impl = make_shared<block_device_mocker_impl>(alignment);
     block_device dev(dev_impl);
     const bootstrap_record write_record = default_write_record;
 
@@ -301,7 +303,7 @@ SEASTAR_THREAD_TEST_CASE(invalid_cluster_size_read) {
 
 
 SEASTAR_THREAD_TEST_CASE(invalid_shards_info_write) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
+    auto dev_impl = make_shared<block_device_mocker_impl>(alignment);
     block_device dev(dev_impl);
     bootstrap_record write_record = default_write_record;
 
@@ -370,7 +372,7 @@ SEASTAR_THREAD_TEST_CASE(invalid_shards_info_write) {
 }
 
 SEASTAR_THREAD_TEST_CASE(invalid_alignment_write) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
+    auto dev_impl = make_shared<block_device_mocker_impl>(alignment);
     block_device dev(dev_impl);
     bootstrap_record write_record = default_write_record;
 
@@ -392,7 +394,7 @@ SEASTAR_THREAD_TEST_CASE(invalid_alignment_write) {
 }
 
 SEASTAR_THREAD_TEST_CASE(invalid_cluster_size_write) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
+    auto dev_impl = make_shared<block_device_mocker_impl>(alignment);
     block_device dev(dev_impl);
     bootstrap_record write_record = default_write_record;
 

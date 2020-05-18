@@ -42,6 +42,8 @@ protected:
     range<size_t> _unflushed_data = {0, 0}; // range of unflushed bytes in _buff
 
 public:
+    virtual ~to_disk_buffer() = default;
+
     to_disk_buffer() = default;
 
     to_disk_buffer(const to_disk_buffer&) = delete;
@@ -49,12 +51,25 @@ public:
     to_disk_buffer(to_disk_buffer&&) = default;
     to_disk_buffer& operator=(to_disk_buffer&&) = default;
 
+    enum [[nodiscard]] init_error {
+        ALIGNMENT_IS_NOT_2_POWER,
+        MAX_SIZE_IS_NOT_ALIGNED,
+        CLUSTER_BEG_OFFSET_IS_NOT_ALIGNED,
+    };
+
     // Total number of bytes appended cannot exceed @p aligned_max_size.
     // @p cluster_beg_offset is the disk offset of the beginning of the cluster.
-    virtual void init(size_t aligned_max_size, unit_size_t alignment, disk_offset_t cluster_beg_offset) {
-        assert(is_power_of_2(alignment));
-        assert(mod_by_power_of_2(aligned_max_size, alignment) == 0);
-        assert(mod_by_power_of_2(cluster_beg_offset, alignment) == 0);
+    virtual std::optional<init_error> init(size_t aligned_max_size, unit_size_t alignment,
+            disk_offset_t cluster_beg_offset) {
+        if (!is_power_of_2(alignment)) {
+            return ALIGNMENT_IS_NOT_2_POWER;
+        }
+        if (mod_by_power_of_2(aligned_max_size, alignment) != 0) {
+            return MAX_SIZE_IS_NOT_ALIGNED;
+        }
+        if (mod_by_power_of_2(cluster_beg_offset, alignment) != 0) {
+            return CLUSTER_BEG_OFFSET_IS_NOT_ALIGNED;
+        }
 
         _max_size = aligned_max_size;
         _alignment = alignment;
@@ -62,9 +77,8 @@ public:
         _unflushed_data = {0, 0};
         _buff = decltype(_buff)::aligned(_alignment, _max_size);
         start_new_unflushed_data();
+        return std::nullopt;
     }
-
-    virtual ~to_disk_buffer() = default;
 
     /**
      * @brief Writes buffered (unflushed) data to disk and starts a new unflushed data if there is enough space
@@ -77,6 +91,10 @@ public:
      * @param device output device
      */
     virtual future<> flush_to_disk(block_device device) {
+        if (_unflushed_data.beg == _max_size) {
+            return now();
+        }
+
         prepare_unflushed_data_for_flush();
         // Data layout overview:
         // |.........................|00000000000000000000000|
@@ -114,24 +132,21 @@ protected:
 
     virtual void prepare_unflushed_data_for_flush() noexcept {}
 
-public:
-    virtual void append_bytes(const void* data, size_t len) noexcept {
+    uint8_t* get_write() noexcept {
+        return _buff.get_write() + _unflushed_data.end;
+    }
+
+    virtual void acknowledge_write(size_t len) noexcept {
         assert(len <= bytes_left());
-        std::memcpy(_buff.get_write() + _unflushed_data.end, data, len);
         _unflushed_data.end += len;
     }
 
+public:
     // Returns maximum number of bytes that may be written to buffer without calling reset()
     virtual size_t bytes_left() const noexcept { return _max_size - _unflushed_data.end; }
 
     virtual size_t bytes_left_after_flush_if_done_now() const noexcept {
         return _max_size - round_up_to_multiple_of_power_of_2(_unflushed_data.end, _alignment);
-    }
-
-    // Returns disk offset of the place where the first byte of next appended bytes would be after flush
-    // TODO: maybe better name for that function? Or any other method to extract that data?
-    virtual disk_offset_t current_disk_offset() const noexcept {
-        return _cluster_beg_offset + _unflushed_data.end;
     }
 };
 

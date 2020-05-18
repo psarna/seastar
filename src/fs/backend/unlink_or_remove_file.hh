@@ -24,7 +24,7 @@
 #include "fs/backend/shard.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
-#include "fs/metadata_disk_entries.hh"
+#include "fs/metadata_log/entries.hh"
 #include "fs/path.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
@@ -118,12 +118,12 @@ class unlink_or_remove_file_operation {
         if (not _shard.inode_exists(_dir_inode)) {
             return make_exception_future(operation_became_invalid_exception());
         }
-
         auto entry_it = _dir_info->entries.find(_entry_name);
         if (entry_it == _dir_info->entries.end() or entry_it->second != _entry_inode) {
             return make_exception_future(operation_became_invalid_exception());
         }
 
+        namespace mle = metadata_log::entries;
         if (_entry_inode_info->is_directory()) {
             inode_info::directory& dir = _entry_inode_info->get_directory();
             if (not dir.entries.empty()) {
@@ -133,24 +133,23 @@ class unlink_or_remove_file_operation {
             assert(_entry_inode_info->links_count == 1);
 
             // Ready to delete directory
-            ondisk_delete_inode_and_dir_entry_header ondisk_entry;
-            using entry_name_length_t = decltype(ondisk_entry.entry_name_length);
-            assert(_entry_name.size() <= std::numeric_limits<entry_name_length_t>::max());
-
-            ondisk_entry =  {
-                _entry_inode,
-                _dir_inode,
-                static_cast<entry_name_length_t>(_entry_name.size())
+            assert(_entry_name.size() < mle::dentry_name_max_len);
+            mle::delete_inode_and_dentry entry = {
+                .di = {.inode = _entry_inode},
+                .dd = {
+                    .dir_inode = _dir_inode,
+                    .name = std::move(_entry_name),
+                }
             };
 
-            switch (_shard.append_ondisk_entry(ondisk_entry, _entry_name.data())) {
+            switch (_shard.append_metadata_log(entry)) {
             case shard::append_result::TOO_BIG:
                 return make_exception_future(cluster_size_too_small_to_perform_operation_exception());
             case shard::append_result::NO_SPACE:
                 return make_exception_future(no_more_space_exception());
             case shard::append_result::APPENDED:
-                _shard.memory_only_delete_dir_entry(*_dir_info, _entry_name);
-                _shard.memory_only_delete_inode(_entry_inode);
+                _shard.memory_only_delete_dentry(*_dir_info, entry.dd.name);
+                _shard.memory_only_delete_inode(entry.di.inode);
                 return now();
             }
             __builtin_unreachable();
@@ -159,21 +158,19 @@ class unlink_or_remove_file_operation {
         assert(_entry_inode_info->is_file());
 
         // Ready to unlink file
-        ondisk_delete_dir_entry_header ondisk_entry;
-        using entry_name_length_t = decltype(ondisk_entry.entry_name_length);
-        assert(_entry_name.size() <= std::numeric_limits<entry_name_length_t>::max());
-        ondisk_entry = {
-            _dir_inode,
-            static_cast<entry_name_length_t>(_entry_name.size())
+        assert(_entry_name.size() < mle::dentry_name_max_len);
+        mle::delete_dentry entry = {
+            .dir_inode = _dir_inode,
+            .name = std::move(_entry_name),
         };
 
-        switch (_shard.append_ondisk_entry(ondisk_entry, _entry_name.data())) {
+        switch (_shard.append_metadata_log(entry)) {
         case shard::append_result::TOO_BIG:
             return make_exception_future(cluster_size_too_small_to_perform_operation_exception());
         case shard::append_result::NO_SPACE:
             return make_exception_future(no_more_space_exception());
         case shard::append_result::APPENDED:
-            _shard.memory_only_delete_dir_entry(*_dir_info, _entry_name);
+            _shard.memory_only_delete_dentry(*_dir_info, entry.name);
             break;
         }
 

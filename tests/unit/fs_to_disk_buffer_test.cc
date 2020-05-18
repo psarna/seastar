@@ -22,7 +22,7 @@
 #include "fs/bitwise.hh"
 #include "fs/to_disk_buffer.hh"
 #include "fs/units.hh"
-#include "fs_mock_block_device.hh"
+#include "fs_block_device_mocker.hh"
 
 #include <cstring>
 #include <seastar/core/units.hh>
@@ -34,23 +34,30 @@
 using namespace seastar;
 using namespace seastar::fs;
 
-constexpr unit_size_t alignment = 4*KB;
-constexpr unit_size_t max_siz = 32*MB; // reasonably larger than alignment
+constexpr unit_size_t alignment = 256;
+constexpr unit_size_t max_siz = 1 * MB; // reasonably larger than alignment
 
-BOOST_TEST_DONT_PRINT_LOG_VALUE(to_disk_buffer)
+class buff_tester : public to_disk_buffer {
+public:
+    void append_bytes(const void* data, size_t len) noexcept {
+        assert(len <= bytes_left());
+        std::memcpy(get_write(), data, len);
+        acknowledge_write(len);
+    }
+};
+
+BOOST_TEST_DONT_PRINT_LOG_VALUE(buff_tester)
 
 SEASTAR_THREAD_TEST_CASE(test_initially_empty) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
-    block_device dev(dev_impl);
-    auto disk_buf = to_disk_buffer();
+    block_device dev = block_device_mocker(alignment);
+    auto disk_buf = buff_tester();
     disk_buf.init(max_siz, alignment, 0);
     BOOST_REQUIRE_EQUAL(disk_buf.bytes_left(), max_siz);
 }
 
 SEASTAR_THREAD_TEST_CASE(test_simple_write) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
-    block_device dev(dev_impl);
-    auto disk_buf = to_disk_buffer();
+    block_device dev = block_device_mocker(alignment);
+    auto disk_buf = buff_tester();
     disk_buf.init(max_siz, alignment, 0);
     auto buf = temporary_buffer<char>::aligned(alignment, max_siz);
     auto expected_buf = temporary_buffer<char>::aligned(alignment, max_siz);
@@ -68,9 +75,8 @@ SEASTAR_THREAD_TEST_CASE(test_simple_write) {
 }
 
 SEASTAR_THREAD_TEST_CASE(test_multiple_write) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
-    block_device dev(dev_impl);
-    auto disk_buf = to_disk_buffer();
+    block_device dev = block_device_mocker(alignment);
+    auto disk_buf = buff_tester();
     disk_buf.init(max_siz, alignment, 0);
     auto buf = temporary_buffer<char>::aligned(alignment, max_siz);
     auto expected_buf = temporary_buffer<char>::aligned(alignment, max_siz);
@@ -96,18 +102,16 @@ SEASTAR_THREAD_TEST_CASE(test_multiple_write) {
 }
 
 SEASTAR_THREAD_TEST_CASE(test_empty_write) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
-    block_device dev(dev_impl);
-    auto disk_buf = to_disk_buffer();
+    block_device dev = block_device_mocker(alignment);
+    auto disk_buf = buff_tester();
     disk_buf.init(max_siz, alignment, 0);
     disk_buf.flush_to_disk(dev).get();
     BOOST_REQUIRE_EQUAL(disk_buf.bytes_left(), max_siz);
 }
 
 SEASTAR_THREAD_TEST_CASE(test_empty_append_bytes) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
-    block_device dev(dev_impl);
-    auto disk_buf = to_disk_buffer();
+    block_device dev = block_device_mocker(alignment);
+    auto disk_buf = buff_tester();
     disk_buf.init(max_siz, alignment, 0);
     disk_buf.append_bytes("123456", 0);
     BOOST_REQUIRE_EQUAL(disk_buf.bytes_left(), max_siz);
@@ -116,9 +120,8 @@ SEASTAR_THREAD_TEST_CASE(test_empty_append_bytes) {
 }
 
 SEASTAR_THREAD_TEST_CASE(test_combined) {
-    auto dev_impl = make_shared<mock_block_device_impl>();
-    block_device dev(dev_impl);
-    auto disk_buf = to_disk_buffer();
+    block_device dev = block_device_mocker(alignment);
+    auto disk_buf = buff_tester();
     disk_buf.init(max_siz, alignment, 0);
     auto buf = temporary_buffer<char>::aligned(alignment, max_siz);
     auto inp = temporary_buffer<char>::aligned(alignment, max_siz);

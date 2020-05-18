@@ -22,6 +22,7 @@
 #pragma once
 
 #include "fs/backend/shard.hh"
+#include "fs/metadata_log/entries.hh"
 #include "fs/path.hh"
 #include "fs/unix_metadata.hh"
 #include "seastar/core/future.hh"
@@ -88,63 +89,51 @@ class create_file_operation {
         if (not _shard.inode_exists(_dir_inode)) {
             return make_exception_future<inode_t>(operation_became_invalid_exception());
         }
-
         if (_dir_info->entries.count(_entry_name) != 0) {
             return make_exception_future<inode_t>(file_already_exists_exception());
         }
-
-        ondisk_create_inode_as_dir_entry_header ondisk_entry;
-        decltype(ondisk_entry.entry_name_length) entry_name_length;
-        if (_entry_name.size() > std::numeric_limits<decltype(entry_name_length)>::max()) {
-            // TODO: add an assert that the culster_size is not too small as it would cause to allocate all clusters
-            //       and then return error ENOSPACE
+        namespace mle = metadata_log::entries;
+        if (_entry_name.size() > mle::dentry_name_max_len) {
             return make_exception_future<inode_t>(filename_too_long_exception());
         }
-        entry_name_length = _entry_name.size();
+        auto curr_time_ns = _shard._clock->current_time_ns();
 
-        using namespace std::chrono;
-        uint64_t curr_time_ns = duration_cast<nanoseconds>(system_clock::now().time_since_epoch()).count();
-        bool creating_dir = [this] {
-            switch (_create_semantics) {
-            case create_semantics::CREATE_FILE:
-            case create_semantics::CREATE_AND_OPEN_FILE:
-                return false;
-            case create_semantics::CREATE_DIR:
-                return true;
-            }
-            __builtin_unreachable();
-        }();
-
-        unix_metadata unx_mtdt = {
-            (creating_dir ? file_type::DIRECTORY : file_type::REGULAR_FILE),
-            _perms,
-            0, // TODO: Eventually, we'll want a user to be able to pass his credentials when bootstrapping the
-            0, //       file system -- that will allow us to authorize users on startup (e.g. via LDAP or whatnot).
-            curr_time_ns,
-            curr_time_ns,
-            curr_time_ns
-        };
-
-        inode_t new_inode = _shard._inode_allocator.alloc();
-
-        ondisk_entry = {
-            {
-                new_inode,
-                metadata_to_ondisk_metadata(unx_mtdt)
+        mle::create_inode_as_dentry entry = {
+            .inode = {
+                .inode = _shard._inode_allocator.alloc(), // TODO: maybe do something if it fails (overflows)
+                .metadata = {
+                    .ftype = [this] {
+                        switch (_create_semantics) {
+                        case create_semantics::CREATE_FILE:
+                        case create_semantics::CREATE_AND_OPEN_FILE:
+                            return file_type::REGULAR_FILE;
+                        case create_semantics::CREATE_DIR:
+                            return file_type::DIRECTORY;
+                        }
+                        __builtin_unreachable();
+                    }(),
+                    .perms = _perms,
+                    .uid = 0, // TODO: Eventually, we'll want a user to be able to pass his credentials when bootstrapping the
+                    .gid = 0, //       file system -- that will allow us to authorize users on startup (e.g. via LDAP or whatnot).
+                    .btime_ns = curr_time_ns,
+                    .mtime_ns = curr_time_ns,
+                    .ctime_ns = curr_time_ns,
+                }
             },
-            _dir_inode,
-            entry_name_length,
+            .name = std::move(_entry_name),
+            .dir_inode = _dir_inode
         };
 
-
-        switch (_shard.append_ondisk_entry(ondisk_entry, _entry_name.data())) {
+        // TODO: add check that the culster_size is not too small as it would cause to allocate all clusters
+        //       and then return error ENOSPACE
+        switch (_shard.append_metadata_log(entry)) {
         case shard::append_result::TOO_BIG:
             return make_exception_future<inode_t>(cluster_size_too_small_to_perform_operation_exception());
         case shard::append_result::NO_SPACE:
             return make_exception_future<inode_t>(no_more_space_exception());
         case shard::append_result::APPENDED:
-            inode_info& new_inode_info = _shard.memory_only_create_inode(new_inode, unx_mtdt);
-            _shard.memory_only_add_dir_entry(*_dir_info, new_inode, std::move(_entry_name));
+            inode_info& new_inode_info = _shard.memory_only_create_inode(entry.inode.inode, entry.inode.metadata);
+            _shard.memory_only_create_dentry(*_dir_info, entry.inode.inode, std::move(entry.name));
 
             switch (_create_semantics) {
             case create_semantics::CREATE_FILE:
@@ -156,7 +145,7 @@ class create_file_operation {
                 break;
             }
 
-            return make_ready_future<inode_t>(new_inode);
+            return make_ready_future<inode_t>(entry.inode.inode);
         }
         __builtin_unreachable();
     }

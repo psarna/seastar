@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <optional>
 
+// TODO: change it to seastar::fs::backend?
 namespace seastar::fs {
 
 // Last log2(fs_shards_pool_size bits) of the inode number contain the id of shard that owns the inode

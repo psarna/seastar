@@ -19,32 +19,42 @@
  * Copyright (C) 2020 ScyllaDB Ltd.
  */
 
-#include "fs_mock_block_device.hh"
+#include "fs_block_device_mocker.hh"
+
+#include <boost/test/unit_test.hpp>
 
 namespace seastar::fs {
 
 namespace {
-logger mlogger("fs_mock_block_device");
+logger mlogger("fs_block_device_mocker");
 } // namespace
 
-future<size_t> mock_block_device_impl::write(uint64_t pos, const void* buffer, size_t len, const io_priority_class&) {
+future<size_t> block_device_mocker_impl::write(uint64_t pos, const void* buffer, size_t len, const io_priority_class&) {
     mlogger.debug("write({}, ..., {})", pos, len);
+    BOOST_REQUIRE_EQUAL(pos % alignment, 0);
+    BOOST_REQUIRE_EQUAL(reinterpret_cast<uintptr_t>(buffer) % alignment, 0);
+    BOOST_REQUIRE_EQUAL(len % alignment, 0);
     writes.emplace_back(write_operation {
         pos,
         temporary_buffer<uint8_t>(static_cast<const uint8_t*>(buffer), len)
     });
-    if (buf.size() < pos + len)
+    if (buf.size() < pos + len) {
         buf.resize(pos + len);
+    }
     std::memcpy(buf.data() + pos, buffer, len);
     return make_ready_future<size_t>(len);
 }
 
-future<size_t> mock_block_device_impl::read(uint64_t pos, void* buffer, size_t len, const io_priority_class&) noexcept {
+future<size_t> block_device_mocker_impl::read(uint64_t pos, void* buffer, size_t len, const io_priority_class&) noexcept {
     mlogger.debug("read({}, ..., {})", pos, len);
-    if (buf.size() < pos + len)
+    BOOST_REQUIRE_EQUAL(pos % alignment, 0);
+    BOOST_REQUIRE_EQUAL(reinterpret_cast<uintptr_t>(buffer) % alignment, 0);
+    BOOST_REQUIRE_EQUAL(len % alignment, 0);
+    if (buf.size() < pos + len) {
         buf.resize(pos + len);
+    }
     std::memcpy(buffer, buf.c_str() + pos, len);
     return make_ready_future<size_t>(len);
 }
 
-} // seastar::fs
+} // namespace seastar::fs

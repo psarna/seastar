@@ -28,55 +28,33 @@
 #include "fs/backend/truncate.hh"
 #include "fs/backend/unlink_or_remove_file.hh"
 #include "fs/backend/write.hh"
-#include "fs/cluster.hh"
-#include "fs/cluster_allocator.hh"
-#include "fs/inode.hh"
 #include "fs/inode_info.hh"
-#include "fs/metadata_disk_entries.hh"
-#include "fs/metadata_to_disk_buffer.hh"
-#include "fs/path.hh"
-#include "fs/units.hh"
+#include "fs/metadata_log/entries.hh"
 #include "fs/unix_metadata.hh"
-#include "seastar/core/aligned_buffer.hh"
-#include "seastar/core/do_with.hh"
-#include "seastar/core/file-types.hh"
-#include "seastar/core/future-util.hh"
-#include "seastar/core/future.hh"
-#include "seastar/core/shared_mutex.hh"
-#include "seastar/fs/exceptions.hh"
-#include "seastar/fs/overloaded.hh"
 #include "seastar/fs/stat.hh"
 
-#include <boost/crc.hpp>
-#include <boost/range/irange.hpp>
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
-#include <cstring>
-#include <limits>
-#include <stdexcept>
-#include <string_view>
-#include <unordered_set>
-#include <variant>
+namespace mle = seastar::fs::metadata_log::entries;
 
 namespace seastar::fs::backend {
 
 shard::shard(block_device device, uint32_t cluster_size, uint32_t alignment,
-    shared_ptr<metadata_to_disk_buffer> metadata_log_cbuf, shared_ptr<cluster_writer> medium_data_log_cw)
+    shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf, shared_ptr<cluster_writer> medium_data_log_cw,
+    shared_ptr<Clock> clock)
 : _device(std::move(device))
 , _cluster_size(cluster_size)
 , _alignment(alignment)
 , _metadata_log_cbuf(std::move(metadata_log_cbuf))
 , _medium_data_log_cw(std::move(medium_data_log_cw))
 , _cluster_allocator({}, {})
-, _inode_allocator(1, 0) {
+, _inode_allocator(1, 0)
+, _clock(std::move(clock)) {
     assert(is_power_of_2(alignment));
     assert(cluster_size > 0 and cluster_size % alignment == 0);
 }
 
 shard::shard(block_device device, unit_size_t cluster_size, unit_size_t alignment)
 : shard(std::move(device), cluster_size, alignment,
-        make_shared<metadata_to_disk_buffer>(), make_shared<cluster_writer>()) {}
+        make_shared<metadata_log::to_disk_buffer>(), make_shared<cluster_writer>(), make_shared<Clock>()) {}
 
 future<> shard::bootstrap(inode_t root_dir, cluster_id_t first_metadata_cluster_id, cluster_range available_clusters,
         fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id) {
@@ -202,7 +180,7 @@ void shard::memory_only_truncate(inode_t inode, file_offset_t size) {
     }
 }
 
-void shard::memory_only_add_dir_entry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name) {
+void shard::memory_only_create_dentry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name) {
     auto it = _inodes.find(entry_inode);
     assert(it != _inodes.end());
     // Directory may only be linked once (to avoid creating cycles)
@@ -213,7 +191,7 @@ void shard::memory_only_add_dir_entry(inode_info::directory& dir, inode_t entry_
     ++it->second.links_count;
 }
 
-void shard::memory_only_delete_dir_entry(inode_info::directory& dir, std::string entry_name) {
+void shard::memory_only_delete_dentry(inode_info::directory& dir, const std::string& entry_name) {
     auto it = dir.entries.find(entry_name);
     assert(it != dir.entries.end());
 
@@ -255,8 +233,8 @@ shard::flush_result shard::schedule_flush_of_curr_cluster_and_change_it_to_new_o
         return flush_result::NO_SPACE;
     }
 
-    auto append_res = _metadata_log_cbuf->append(ondisk_next_metadata_cluster {*next_cluster});
-    assert(append_res == metadata_to_disk_buffer::APPENDED);
+    auto append_res = _metadata_log_cbuf->append(mle::next_metadata_cluster{.cluster_id = *next_cluster});
+    assert(append_res == metadata_log::to_disk_buffer::APPENDED);
     schedule_flush_of_curr_cluster();
 
     // Make next cluster the current cluster to allow writing next metadata entries before flushing finishes
@@ -273,7 +251,7 @@ void shard::schedule_attempt_to_delete_inode(inode_t inode) {
             return now(); // Scheduled delete became invalid
         }
 
-        switch (append_ondisk_entry(ondisk_delete_inode {inode})) {
+        switch (append_metadata_log(mle::delete_inode{.inode = inode})) {
         case append_result::TOO_BIG:
             assert(false and "ondisk entry cannot be too big");
         case append_result::NO_SPACE:
@@ -379,21 +357,22 @@ file_offset_t shard::file_size(inode_t inode) const {
 
 stat_data shard::stat(inode_t inode) const {
     auto it = _inodes.find(inode);
-    if (it == _inodes.end())
+    if (it == _inodes.end()) {
         throw invalid_inode_exception();
+    }
 
     const inode_info& inode_info = it->second;
     return {
-        std::visit(overloaded {
+        .type = std::visit(overloaded {
             [](const inode_info::file&) { return directory_entry_type::regular; },
             [](const inode_info::directory&) { return directory_entry_type::directory; },
         }, inode_info.contents),
-        inode_info.metadata.perms,
-        inode_info.metadata.uid,
-        inode_info.metadata.gid,
-        std::chrono::system_clock::time_point(std::chrono::nanoseconds(inode_info.metadata.btime_ns)),
-        std::chrono::system_clock::time_point(std::chrono::nanoseconds(inode_info.metadata.mtime_ns)),
-        std::chrono::system_clock::time_point(std::chrono::nanoseconds(inode_info.metadata.ctime_ns)),
+        .perms = inode_info.metadata.perms,
+        .uid = inode_info.metadata.uid,
+        .gid = inode_info.metadata.gid,
+        .time_born = std::chrono::system_clock::time_point(std::chrono::nanoseconds(inode_info.metadata.btime_ns)),
+        .time_modified = std::chrono::system_clock::time_point(std::chrono::nanoseconds(inode_info.metadata.mtime_ns)),
+        .time_changed = std::chrono::system_clock::time_point(std::chrono::nanoseconds(inode_info.metadata.ctime_ns)),
     };
 }
 

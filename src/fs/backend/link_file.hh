@@ -22,7 +22,7 @@
 #pragma once
 
 #include "fs/backend/shard.hh"
-#include "fs/metadata_disk_entries.hh"
+#include "fs/metadata_log/entries.hh"
 #include "fs/path.hh"
 
 namespace seastar::fs::backend {
@@ -69,33 +69,30 @@ class link_file_operation {
         if (not _shard.inode_exists(_dir_inode)) {
             return make_exception_future(operation_became_invalid_exception());
         }
-
         if (_dir_info->entries.count(_entry_name) != 0) {
             return make_exception_future(file_already_exists_exception());
         }
 
-        ondisk_add_dir_entry_header ondisk_entry;
-        decltype(ondisk_entry.entry_name_length) entry_name_length;
-        if (_entry_name.size() > std::numeric_limits<decltype(entry_name_length)>::max()) {
-            // TODO: add an assert that the culster_size is not too small as it would cause to allocate all clusters
-            //       and then return error ENOSPACE
+        namespace mle = metadata_log::entries;
+        if (_entry_name.size() > mle::dentry_name_max_len) {
             return make_exception_future(filename_too_long_exception());
         }
-        entry_name_length = _entry_name.size();
 
-        ondisk_entry = {
-            _dir_inode,
-            _src_inode,
-            entry_name_length,
+        mle::create_dentry entry = {
+            .inode = _src_inode,
+            .name = std::move(_entry_name),
+            .dir_inode = _dir_inode,
         };
 
-        switch (_shard.append_ondisk_entry(ondisk_entry, _entry_name.data())) {
+        // TODO: add check that the culster_size is not too small as it would cause to allocate all clusters
+        //       and then return error ENOSPACE
+        switch (_shard.append_metadata_log(entry)) {
         case shard::append_result::TOO_BIG:
             return make_exception_future(cluster_size_too_small_to_perform_operation_exception());
         case shard::append_result::NO_SPACE:
             return make_exception_future(no_more_space_exception());
         case shard::append_result::APPENDED:
-            _shard.memory_only_add_dir_entry(*_dir_info, _src_inode, std::move(_entry_name));
+            _shard.memory_only_create_dentry(*_dir_info, _src_inode, std::move(entry.name));
             return now();
         }
         __builtin_unreachable();

@@ -19,68 +19,49 @@
  * Copyright (C) 2020 ScyllaDB
  */
 
-#include "fs/backend/shard.hh"
-#include "fs/bootstrap_record.hh"
-#include "fs/inode.hh"
-#include "fs/units.hh"
-#include "fs_mock_block_device.hh"
-
-#include "seastar/core/units.hh"
+#include "fs_backend_shard_tester.hh"
+#include "fs_block_device_mocker.hh"
+#include "seastar/core/file-types.hh"
+#include "seastar/core/future.hh"
 #include "seastar/fs/block_device.hh"
 #include "seastar/testing/thread_test_case.hh"
 #include "seastar/util/defer.hh"
 
+using std::vector;
+using std::string;
+
 using namespace seastar;
-using namespace fs;
+using namespace seastar::fs;
+namespace mle = seastar::fs::metadata_log::entries;
 
-constexpr unit_size_t cluster_size = 1 * MB;
-constexpr unit_size_t alignment = 4 * KB;
-constexpr inode_t root_directory = 0;
-
-future<std::set<std::string>> get_entries_from_directory(backend::shard& shard, std::string dir_path) {
-    return async([&shard, dir_path = std::move(dir_path)] {
-        std::set<std::string> entries;
-        shard.iterate_directory(dir_path, [&entries] (const std::string& entry) -> future<stop_iteration> {
-            entries.insert(entry);
-            return make_ready_future<stop_iteration>(stop_iteration::no);
-        }).wait();
-        return entries;
-    });
+vector<string> get_entries_from_dir(backend::shard& shard, string dir_path) {
+    vector<string> entries;
+    shard.iterate_directory(dir_path, [&entries](const string& entry) {
+        entries.emplace_back(entry);
+        return make_ready_future<stop_iteration>(stop_iteration::no);
+    }).get();
+    return entries;
 }
 
-BOOST_TEST_DONT_PRINT_LOG_VALUE(std::set<std::string>)
-
 SEASTAR_THREAD_TEST_CASE(create_dirs_and_bootstrap_test) {
-    BOOST_TEST_MESSAGE("\nTest name: " << get_name());
-    const bootstrap_record::shard_info shard_info({1, {1, 16}});
-    const std::set<std::string> control_directories = {{"dir1", "dir2", "dir3"}};
-    auto dev_impl = make_shared<mock_block_device_impl>();
-
-    {
-        block_device device(dev_impl);
-        auto shard = backend::shard(std::move(device), cluster_size, alignment);
-        const auto close_log = defer([&shard]() mutable { shard.shutdown().wait(); });
-        shard.bootstrap(root_directory, shard_info.metadata_cluster, shard_info.available_clusters, 1, 0).wait();
-
-        int flush_after = 1;
-        for (auto directory: control_directories) {
-            shard.create_directory("/" + std::move(directory), file_permissions::default_file_permissions).wait();
-            if (--flush_after == 0) {
-                shard.flush_log().wait();
-            }
+    struct tester : backend::shard_tester {
+        void test() {
+            const vector<string> dirs = {"dir1", "dir2", "dir3"};
+            constexpr auto perms = file_permissions::default_dir_permissions;
+            shard.create_directory("/" + dirs[0], perms).get();
+            shard.flush_log().get();
+            shard.create_directory("/" + dirs[1], perms).get();
+            shard.create_directory("/" + dirs[2], perms).get();
+            shard.shutdown().get();
+            // Bootstrapping the same shard again
+            bootstrap_shard();
+            BOOST_REQUIRE_EQUAL(get_entries_from_dir(shard, "/"), dirs);
+            // Bootstrapping new shard
+            backend::shard other_shard(block_device(device_holder), options.cluster_size, options.alignment);
+            bootstrap_shard(other_shard);
+            BOOST_REQUIRE_EQUAL(get_entries_from_dir(other_shard, "/"), dirs);
         }
+    };
 
-        const auto entries = get_entries_from_directory(shard, "/").get0();
-        BOOST_REQUIRE_EQUAL(entries, control_directories);
-    }
-
-    {
-        block_device device(dev_impl);
-        auto shard = backend::shard(std::move(device), cluster_size, alignment);
-        const auto close_log = defer([&shard]() mutable { shard.shutdown().wait(); });
-        shard.bootstrap(root_directory, shard_info.metadata_cluster, shard_info.available_clusters, 1, 0).wait();
-
-        const auto entries = get_entries_from_directory(shard, "/").get0();
-        BOOST_REQUIRE_EQUAL(entries, control_directories);
-    }
+    tester().test();
 }

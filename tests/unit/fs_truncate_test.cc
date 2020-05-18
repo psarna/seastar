@@ -23,149 +23,103 @@
 #include "fs/backend/read.hh"
 #include "fs/backend/truncate.hh"
 #include "fs/backend/write.hh"
-#include "fs/bitwise.hh"
-#include "fs/cluster.hh"
-#include "fs/units.hh"
-#include "fs_metadata_common.hh"
-#include "fs_mock_block_device.hh"
-#include "fs_mock_metadata_to_disk_buffer.hh"
+#include "fs/metadata_log/entries.hh"
+#include "fs_backend_shard_tester.hh"
+#include "fs_random.hh"
+#include "seastar/testing/thread_test_case.hh"
 
-#include <seastar/core/temporary_buffer.hh>
-#include <seastar/core/units.hh>
-#include <seastar/testing/thread_test_case.hh>
+#include <string_view>
 
-#include <assert.h>
-#include <cstdint>
-#include <string>
-#include <utility>
-#include <vector>
+using std::string;
+using std::string_view;
 
 using namespace seastar;
 using namespace seastar::fs;
-
-namespace {
-
-constexpr unit_size_t default_cluster_size = 1 * MB;
-constexpr unit_size_t default_alignment = 4096;
-constexpr cluster_range default_cluster_range = {1, 10};
-constexpr cluster_id_t default_metadata_log_cluster = 1;
-
-auto default_init_shard() {
-    return init_shard(default_cluster_size, default_alignment, default_metadata_log_cluster, default_cluster_range);
-}
-
-} // namespace
+namespace mle = seastar::fs::metadata_log::entries;
 
 SEASTAR_THREAD_TEST_CASE(test_truncate_exceptions) {
-    auto [blockdev, shard] = default_init_shard();
-    inode_t inode = create_and_open_file(shard);
-    file_offset_t size = 3123;
-    BOOST_CHECK_THROW(shard.truncate(inode+1, size).get0(), invalid_inode_exception);
+    backend::shard_tester st;
+    inode_t inode = st.create_and_open_file();
+    const file_offset_t size = random_value(1, 1 * MB);
+    BOOST_CHECK_THROW(st.shard.truncate(inode + 1, size).get0(), invalid_inode_exception);
 }
 
 SEASTAR_THREAD_TEST_CASE(test_empty_truncate) {
-    BOOST_TEST_MESSAGE("\nTest name: " << get_name());
-    const unix_time_t time_ns_start = get_current_time_ns();
-    auto [blockdev, shard] = default_init_shard();
-    inode_t inode = create_and_open_file(shard);
-    file_offset_t size = 3123;
-    BOOST_TEST_MESSAGE("truncate size: " << size);
-    shard.truncate(inode, size).get0();
-    auto meta_buff = get_current_metadata_buffer();
-    BOOST_TEST_MESSAGE("meta_buff->actions: " << meta_buff->actions);
+    backend::shard_tester st;
+    const file_offset_t size = random_value(1, 1 * MB);
+    const inode_t inode = st.create_and_open_file();
+    auto& ml_buff = st.curr_ml_buff();
+
+    const auto time_ns = st.clock.refreeze_time_ns();
+    st.shard.truncate(inode, size).get0();
+    BOOST_TEST_MESSAGE("ml_buff->actions: " << ml_buff.actions);
 
     // Check metadata
-    BOOST_REQUIRE_EQUAL(meta_buff->actions.size(), 2);
-    ondisk_truncate expected_entry {
-        inode,
-        size,
-        time_ns_start
-    };
-    CHECK_CALL(check_metadata_entries_equal(meta_buff->actions[1], expected_entry));
-
+    BOOST_REQUIRE_EQUAL(ml_buff.actions.size(), 2);
+    BOOST_REQUIRE_EQUAL(ml_buff.actions.back(), (mle::truncate{
+        .inode = inode,
+        .size = size,
+        .time_ns = time_ns
+    }));
     // Check data
-    temporary_buffer<uint8_t> buff = temporary_buffer<uint8_t>::aligned(default_alignment, round_up_to_multiple_of_power_of_2(size, default_alignment));
-    temporary_buffer<uint8_t> read_buff = temporary_buffer<uint8_t>::aligned(default_alignment, round_up_to_multiple_of_power_of_2(size, default_alignment));
-    memset(buff.get_write(), 0, size);
-    BOOST_REQUIRE_EQUAL(shard.read(inode, 0, read_buff.get_write(), size).get0(), size);
-    BOOST_REQUIRE_EQUAL(memcmp(buff.get(), read_buff.get(), size), 0);
-
-    BOOST_REQUIRE_EQUAL(shard.file_size(inode), size);
-
-    BOOST_TEST_MESSAGE("");
+    BOOST_REQUIRE_EQUAL(st.read(inode, 0, size), string(size, '\0'));
+    BOOST_REQUIRE_EQUAL(st.shard.file_size(inode), size);
 }
 
 SEASTAR_THREAD_TEST_CASE(test_truncate_to_less) {
-    BOOST_TEST_MESSAGE("\nTest name: " << get_name());
-    constexpr file_offset_t write_offset = 10;
-    const unix_time_t time_ns_start = get_current_time_ns();
-    small_write_len_t write_len = 3*default_alignment;
-    file_offset_t size = 77;
+    backend::shard_tester st;
+    const inode_t inode = st.create_and_open_file();
+    auto& ml_buff = st.curr_ml_buff();
 
-    auto [blockdev, shard] = default_init_shard();
-    inode_t inode = create_and_open_file(shard);
+    constexpr auto write_offset = 10;
+    const auto write_len = 3 * st.options.alignment;
+    string written(write_len, 'a');
+    st.write(inode, write_offset, written.data(), write_len);
+    auto actions_size_after_write = ml_buff.actions.size();
 
-    temporary_buffer<uint8_t> buff = temporary_buffer<uint8_t>::aligned(default_alignment, write_len);
-    memset(buff.get_write(), 'a', write_len);
-    BOOST_REQUIRE_EQUAL(shard.write(inode, write_offset, buff.get(), write_len).get0(), write_len);
-    auto meta_buff = get_current_metadata_buffer();
-    auto actions_size_after_write = meta_buff->actions.size();
-    shard.truncate(inode, size).get0();
-    BOOST_TEST_MESSAGE("meta_buff->actions: " << meta_buff->actions);
+    const auto time_ns = st.clock.refreeze_time_ns();
+    constexpr auto size = 77;
+    st.shard.truncate(inode, size).get0();
+    BOOST_TEST_MESSAGE("ml_buff.actions: " << ml_buff.actions);
 
     // Check metadata
-    BOOST_REQUIRE_EQUAL(meta_buff->actions.size(), actions_size_after_write+1);
-    ondisk_truncate expected_entry {
-        inode,
-        size,
-        time_ns_start
-    };
-    CHECK_CALL(check_metadata_entries_equal(meta_buff->actions[actions_size_after_write], expected_entry));
-
+    BOOST_REQUIRE_EQUAL(ml_buff.actions.size(), actions_size_after_write + 1);
+    BOOST_REQUIRE_EQUAL(ml_buff.actions.back(), (mle::truncate{
+        .inode = inode,
+        .size = size,
+        .time_ns = time_ns
+    }));
     // Check data
-    temporary_buffer<uint8_t> read_buff = temporary_buffer<uint8_t>::aligned(default_alignment, write_len);
-    BOOST_REQUIRE_EQUAL(shard.read(inode, write_offset, read_buff.get_write(), size-write_offset).get0(), size-write_offset);
-    BOOST_REQUIRE_EQUAL(memcmp(buff.get(), read_buff.get(), size-write_offset), 0);
-
-    BOOST_REQUIRE_EQUAL(shard.file_size(inode), size);
-
-    BOOST_TEST_MESSAGE("");
+    written.resize(size - write_offset);
+    BOOST_REQUIRE_EQUAL(st.read(inode, write_offset, size - write_offset), written);
+    BOOST_REQUIRE_EQUAL(st.shard.file_size(inode), size);
 }
 
 SEASTAR_THREAD_TEST_CASE(test_truncate_to_more) {
-    BOOST_TEST_MESSAGE("\nTest name: " << get_name());
-    constexpr file_offset_t write_offset = 10;
-    const unix_time_t time_ns_start = get_current_time_ns();
-    small_write_len_t write_len = 3*default_alignment;
-    file_offset_t size = 3*default_alignment+default_alignment/3;
+    backend::shard_tester st;
+    const inode_t inode = st.create_and_open_file();
+    auto& ml_buff = st.curr_ml_buff();
 
-    auto [blockdev, shard] = default_init_shard();
-    inode_t inode = create_and_open_file(shard);
+    constexpr auto write_offset = 10;
+    const auto write_len = 3 * st.options.alignment;
+    auto size = write_len + st.options.alignment / 3;
+    string written(write_len, 'a');
+    st.write(inode, write_offset, written.data(), write_len);
+    auto actions_size_after_write = ml_buff.actions.size();
 
-    temporary_buffer<uint8_t> buff = temporary_buffer<uint8_t>::aligned(default_alignment, write_len+default_alignment);
-    memset(buff.get_write(), 0, size-write_offset);
-    memset(buff.get_write(), 'a', write_len);
-    BOOST_REQUIRE_EQUAL(shard.write(inode, write_offset, buff.get(), write_len).get0(), write_len);
-    auto meta_buff = get_current_metadata_buffer();
-    auto actions_size_after_write = meta_buff->actions.size();
-    shard.truncate(inode, size).get0();
-    BOOST_TEST_MESSAGE("meta_buff->actions: " << meta_buff->actions);
+    const auto time_ns = st.clock.refreeze_time_ns();
+    st.shard.truncate(inode, size).get0();
+    BOOST_TEST_MESSAGE("ml_buff.actions: " << ml_buff.actions);
 
     // Check metadata
-    BOOST_REQUIRE_EQUAL(meta_buff->actions.size(), actions_size_after_write+1);
-    ondisk_truncate expected_entry {
-        inode,
-        size,
-        time_ns_start
-    };
-    CHECK_CALL(check_metadata_entries_equal(meta_buff->actions[actions_size_after_write], expected_entry));
-
+    BOOST_REQUIRE_EQUAL(ml_buff.actions.size(), actions_size_after_write + 1);
+    BOOST_REQUIRE_EQUAL(ml_buff.actions.back(), (mle::truncate{
+        .inode = inode,
+        .size = size,
+        .time_ns = time_ns
+    }));
     // Check data
-    temporary_buffer<uint8_t> read_buff = temporary_buffer<uint8_t>::aligned(default_alignment, write_len+default_alignment);
-    BOOST_REQUIRE_EQUAL(shard.read(inode, write_offset, read_buff.get_write(), size-write_offset).get0(), size-write_offset);
-    BOOST_REQUIRE_EQUAL(memcmp(buff.get(), read_buff.get(), size-write_offset), 0);
-
-    BOOST_REQUIRE_EQUAL(shard.file_size(inode), size);
-
-    BOOST_TEST_MESSAGE("");
+    written.resize(size - write_offset, '\0');
+    BOOST_REQUIRE_EQUAL(st.read(inode, write_offset, size - write_offset), written);
+    BOOST_REQUIRE_EQUAL(st.shard.file_size(inode), size);
 }

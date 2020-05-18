@@ -20,522 +20,26 @@
  */
 
 #include "fs/backend/bootstrapping.hh"
-#include "fs/bitwise.hh"
+#include "fs/backend/shard.hh"
+#include "fs/cluster.hh"
 #include "fs/inode_info.hh"
-#include "fs/metadata_disk_entries.hh"
+#include "fs/metadata_log/entries.hh"
+#include "fs/unix_metadata.hh"
+#include "seastar/fs/overloaded.hh"
+#include "seastar/util/defer.hh"
 #include "seastar/util/log.hh"
+
+#include <string_view>
+
+using std::string_view;
+
+namespace mle = seastar::fs::metadata_log::entries;
 
 namespace seastar::fs::backend {
 
 namespace {
-logger mlogger("fs_backend_bootstrap");
+logger mlogger("fs_backend_shard_bootstrap");
 } // namespace
-
-bool data_reader::read(void* destination, size_t size) {
-    if (_pos + size > _size) {
-        return false;
-    }
-
-    std::memcpy(destination, _data + _pos, size);
-    _pos += size;
-    return true;
-}
-
-bool data_reader::read_string(std::string& str, size_t size) {
-    str.resize(size);
-    return read(str.data(), size);
-}
-
-std::optional<temporary_buffer<uint8_t>> data_reader::read_tmp_buff(size_t size) {
-    if (_pos + size > _size) {
-        return std::nullopt;
-    }
-
-    _pos += size;
-    return temporary_buffer<uint8_t>(_data + _pos - size, size);
-}
-
-bool data_reader::process_crc_without_reading(boost::crc_32_type& crc, size_t size) {
-    if (_pos + size > _size) {
-        return false;
-    }
-
-    crc.process_bytes(_data + _pos, size);
-    return true;
-}
-
-std::optional<data_reader> data_reader::extract(size_t size) {
-    if (_pos + size > _size) {
-        return std::nullopt;
-    }
-
-    _pos += size;
-    return data_reader(_data + _pos - size, size);
-}
-
-bootstrapping::bootstrapping(shard& shard, cluster_range available_clusters)
-: _shard(shard)
-, _available_clusters(available_clusters)
-, _curr_cluster_data(decltype(_curr_cluster_data)::aligned(shard._alignment, shard._cluster_size))
-{}
-
-future<> bootstrapping::bootstrap(cluster_id_t first_metadata_cluster_id, fs_shard_id_t fs_shards_pool_size,
-        fs_shard_id_t fs_shard_id) {
-    _next_cluster = first_metadata_cluster_id;
-    mlogger.debug(">>>>  Started bootstrapping  <<<<");
-    return do_with((cluster_id_t)first_metadata_cluster_id, [this](cluster_id_t& last_cluster) {
-        return do_until([this] { return not _next_cluster.has_value(); }, [this, &last_cluster] {
-            cluster_id_t curr_cluster = *_next_cluster;
-            _next_cluster = std::nullopt;
-            bool inserted = _taken_clusters.emplace(curr_cluster).second;
-            assert(inserted); // TODO: check it in next_cluster record
-            last_cluster = curr_cluster;
-            return bootstrap_cluster(curr_cluster);
-        }).then([this, &last_cluster] {
-            mlogger.debug("Data bootstrapping is done");
-            // Initialize _metadata_log_cbuf
-            _shard._metadata_log_cbuf = _shard._metadata_log_cbuf->virtual_constructor();
-            mlogger.debug("Initializing _metadata_log_cbuf: cluster {}, pos {}", last_cluster, _curr_cluster.last_checkpointed_pos());
-            _shard._metadata_log_cbuf->init_from_bootstrapped_cluster(_shard._cluster_size,
-                    _shard._alignment, cluster_id_to_offset(last_cluster, _shard._cluster_size),
-                    _curr_cluster.last_checkpointed_pos());
-        });
-    }).then([this, fs_shards_pool_size, fs_shard_id] {
-        // Initialize _cluser_allocator
-        mlogger.debug("Initializing cluster allocator");
-        std::deque<cluster_id_t> free_clusters;
-        for (auto cid : boost::irange(_available_clusters.beg, _available_clusters.end)) {
-            if (_taken_clusters.count(cid) == 0) {
-                free_clusters.emplace_back(cid);
-            }
-        }
-        if (free_clusters.empty()) {
-            return make_exception_future(no_more_space_exception());
-        }
-        cluster_id_t datalog_cluster_id = free_clusters.front();
-        free_clusters.pop_front();
-
-        _shard._medium_data_log_cw = _shard._medium_data_log_cw->virtual_constructor();
-        _shard._medium_data_log_cw->init(_shard._cluster_size, _shard._alignment,
-                cluster_id_to_offset(datalog_cluster_id, _shard._cluster_size));
-
-        mlogger.debug("free clusters: {}", free_clusters.size());
-        _shard._cluster_allocator = cluster_allocator(std::move(_taken_clusters), std::move(free_clusters));
-
-        // Reset _inode_allocator
-        std::optional<inode_t> max_inode_no;
-        if (not _shard._inodes.empty()) {
-            max_inode_no =_shard._inodes.rbegin()->first;
-        }
-        _shard._inode_allocator = shard_inode_allocator(fs_shards_pool_size, fs_shard_id, max_inode_no);
-
-        // TODO: what about orphaned inodes: maybe they are remnants of unlinked files and we need to delete them,
-        //       or maybe not?
-        return now();
-    });
-}
-
-future<> bootstrapping::bootstrap_cluster(cluster_id_t curr_cluster) {
-    disk_offset_t curr_cluster_disk_offset = cluster_id_to_offset(curr_cluster, _shard._cluster_size);
-    mlogger.debug("Bootstrapping from cluster {}...", curr_cluster);
-    return _shard._device.read(curr_cluster_disk_offset, _curr_cluster_data.get_write(),
-            _shard._cluster_size).then([this, curr_cluster](size_t bytes_read) {
-        if (bytes_read != _shard._cluster_size) {
-            return make_exception_future(std::runtime_error("Failed to read whole cluster of the metadata log"));
-        }
-
-        mlogger.debug("Read cluster {}", curr_cluster);
-        _curr_cluster = data_reader(_curr_cluster_data.get(), _shard._cluster_size);
-        return bootstrap_read_cluster();
-    });
-}
-
-future<> bootstrapping::bootstrap_read_cluster() {
-    // Process cluster: the data layout format is:
-    // | checkpoint1 | data1... | checkpoint2 | data2... | ... |
-    return do_with(false, [this](bool& whole_log_ended) {
-        return do_until([this, &whole_log_ended] { return whole_log_ended or _next_cluster.has_value(); },
-                [this, &whole_log_ended] {
-            _curr_cluster.align_curr_pos(_shard._alignment);
-            _curr_cluster.checkpoint_curr_pos();
-
-            if (not read_and_check_checkpoint()) {
-                mlogger.debug("Checkpoint invalid");
-                whole_log_ended = true;
-                return now();
-            }
-
-            mlogger.debug("Checkpoint correct");
-            return bootstrap_checkpointed_data();
-        }).then([] {
-            mlogger.debug("Cluster ended");
-        });
-    });
-}
-
-bool bootstrapping::read_and_check_checkpoint() {
-    mlogger.debug("Processing checkpoint at {}", _curr_cluster.curr_pos());
-    ondisk_type entry_type;
-    ondisk_checkpoint checkpoint;
-    if (not _curr_cluster.read_entry(entry_type)) {
-        mlogger.debug("Cannot read entry type");
-        return false;
-    }
-    if (entry_type != CHECKPOINT) {
-        mlogger.debug("Entry type (= {}) is not CHECKPOINT (= {})", entry_type, CHECKPOINT);
-        return false;
-    }
-    if (not _curr_cluster.read_entry(checkpoint)) {
-        mlogger.debug("Cannot read checkpoint entry");
-        return false;
-    }
-
-    boost::crc_32_type crc;
-    if (not _curr_cluster.process_crc_without_reading(crc, checkpoint.checkpointed_data_length)) {
-        mlogger.debug("Invalid checkpoint's data length: {}", (unit_size_t)checkpoint.checkpointed_data_length);
-        return false;
-    }
-    crc.process_bytes(&checkpoint.checkpointed_data_length, sizeof(checkpoint.checkpointed_data_length));
-    if (crc.checksum() != checkpoint.crc32_code) {
-        mlogger.debug("CRC code does not match: computed = {}, read = {}", crc.checksum(), (uint32_t)checkpoint.crc32_code);
-        return false;
-    }
-
-    auto opt = _curr_cluster.extract(checkpoint.checkpointed_data_length);
-    assert(opt.has_value());
-    _curr_checkpoint = *opt;
-    return true;
-}
-
-future<> bootstrapping::bootstrap_checkpointed_data() {
-    return do_with(ondisk_type {}, [this](ondisk_type& entry_type) {
-        return do_until([this, &entry_type] { return not _curr_checkpoint.read_entry(entry_type); },
-                [this, &entry_type] {
-            switch (entry_type) {
-            case INVALID:
-            case CHECKPOINT: // CHECKPOINT cannot appear as part of checkpointed data
-                return invalid_entry_exception();
-            case NEXT_METADATA_CLUSTER:
-                return bootstrap_next_metadata_cluster();
-            case CREATE_INODE:
-                return bootstrap_create_inode();
-            case DELETE_INODE:
-                return bootstrap_delete_inode();
-            case SMALL_WRITE:
-                return bootstrap_small_write();
-            case MEDIUM_WRITE:
-                return bootstrap_medium_write();
-            case LARGE_WRITE:
-                return bootstrap_large_write();
-            case LARGE_WRITE_WITHOUT_MTIME:
-                return bootstrap_large_write_without_mtime();
-            case TRUNCATE:
-                return bootstrap_truncate();
-            case ADD_DIR_ENTRY:
-                return bootstrap_add_dir_entry();
-            case CREATE_INODE_AS_DIR_ENTRY:
-                return bootstrap_create_inode_as_dir_entry();
-            case DELETE_DIR_ENTRY:
-                return bootstrap_delete_dir_entry();
-            case DELETE_INODE_AND_DIR_ENTRY:
-                return bootstrap_delete_inode_and_dir_entry();
-            }
-
-            // unknown type => metadata log corruption
-            return invalid_entry_exception();
-        }).then([this] {
-            if (_curr_checkpoint.bytes_left() > 0) {
-                return invalid_entry_exception(); // Corrupted checkpointed data
-            }
-            return now();
-        });
-    });
-}
-
-future<> bootstrapping::bootstrap_next_metadata_cluster() {
-    ondisk_next_metadata_cluster entry;
-    if (not _curr_checkpoint.read_entry(entry)) {
-        return invalid_entry_exception();
-    }
-
-    if (_next_cluster.has_value()) {
-        return invalid_entry_exception(); // Only one NEXT_METADATA_CLUSTER may appear in one cluster
-    }
-
-    _next_cluster = (cluster_id_t)entry.cluster_id;
-    return now();
-}
-
-bool bootstrapping::inode_exists(inode_t inode) {
-    return _shard._inodes.count(inode) != 0;
-}
-
-future<> bootstrapping::bootstrap_create_inode() {
-    ondisk_create_inode entry;
-    if (not _curr_checkpoint.read_entry(entry) or inode_exists(entry.inode)) {
-        return invalid_entry_exception();
-    }
-
-    _shard.memory_only_create_inode(entry.inode, ondisk_metadata_to_metadata(entry.metadata));
-    return now();
-}
-
-future<> bootstrapping::bootstrap_delete_inode() {
-    ondisk_delete_inode entry;
-    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
-        return invalid_entry_exception();
-    }
-
-    inode_info& inode_info = _shard._inodes.at(entry.inode);
-    if (inode_info.links_count > 0) {
-        return invalid_entry_exception(); // Only unlinked inodes may be deleted
-    }
-
-    if (inode_info.is_directory() and not inode_info.get_directory().entries.empty()) {
-        return invalid_entry_exception(); // Only empty directories may be deleted
-    }
-
-    _shard.memory_only_delete_inode(entry.inode);
-    return now();
-}
-
-future<> bootstrapping::bootstrap_small_write() {
-    ondisk_small_write_header entry;
-    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
-        return invalid_entry_exception();
-    }
-
-    if (not _shard._inodes[entry.inode].is_file()) {
-        return invalid_entry_exception();
-    }
-
-    auto data_opt = _curr_checkpoint.read_tmp_buff(entry.length);
-    if (not data_opt) {
-        return invalid_entry_exception();
-    }
-    temporary_buffer<uint8_t>& data = *data_opt;
-
-    _shard.memory_only_small_write(entry.inode, entry.offset, std::move(data));
-    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
-    return now();
-}
-
-future<> bootstrapping::bootstrap_medium_write() {
-    ondisk_medium_write entry;
-    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
-        return invalid_entry_exception();
-    }
-
-    if (not _shard._inodes[entry.inode].is_file()) {
-        return invalid_entry_exception();
-    }
-
-    cluster_id_t data_cluster_id = offset_to_cluster_id(entry.disk_offset, _shard._cluster_size);
-    if (_available_clusters.beg > data_cluster_id or
-            _available_clusters.end <= data_cluster_id) {
-        return invalid_entry_exception();
-    }
-    // TODO: we could check overlapping with other writes
-    _taken_clusters.emplace(data_cluster_id);
-
-    _shard.memory_only_disk_write(entry.inode, entry.offset, entry.disk_offset, entry.length);
-    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
-    return now();
-}
-
-future<> bootstrapping::bootstrap_large_write() {
-    ondisk_large_write entry;
-    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
-        return invalid_entry_exception();
-    }
-
-    if (not _shard._inodes[entry.inode].is_file()) {
-        return invalid_entry_exception();
-    }
-
-    if (_available_clusters.beg > entry.data_cluster or
-            _available_clusters.end <= entry.data_cluster or
-            _taken_clusters.count(entry.data_cluster) != 0) {
-        return invalid_entry_exception();
-    }
-    _taken_clusters.emplace((cluster_id_t)entry.data_cluster);
-
-    _shard.memory_only_disk_write(entry.inode, entry.offset,
-            cluster_id_to_offset(entry.data_cluster, _shard._cluster_size), _shard._cluster_size);
-    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
-    return now();
-}
-
-// TODO: copy pasting :(
-future<> bootstrapping::bootstrap_large_write_without_mtime() {
-    ondisk_large_write_without_mtime entry;
-    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
-        return invalid_entry_exception();
-    }
-
-    if (not _shard._inodes[entry.inode].is_file()) {
-        return invalid_entry_exception();
-    }
-
-    if (_available_clusters.beg > entry.data_cluster or
-            _available_clusters.end <= entry.data_cluster or
-            _taken_clusters.count(entry.data_cluster) != 0) {
-        return invalid_entry_exception();
-    }
-    _taken_clusters.emplace((cluster_id_t)entry.data_cluster);
-
-    _shard.memory_only_disk_write(entry.inode, entry.offset,
-            cluster_id_to_offset(entry.data_cluster, _shard._cluster_size), _shard._cluster_size);
-    return now();
-}
-
-future<> bootstrapping::bootstrap_truncate() {
-    ondisk_truncate entry;
-    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
-        return invalid_entry_exception();
-    }
-
-    if (not _shard._inodes[entry.inode].is_file()) {
-        return invalid_entry_exception();
-    }
-
-    _shard.memory_only_truncate(entry.inode, entry.size);
-    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
-    return now();
-}
-
-future<> bootstrapping::bootstrap_add_dir_entry() {
-    ondisk_add_dir_entry_header entry;
-    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.dir_inode) or
-            not inode_exists(entry.entry_inode)) {
-        return invalid_entry_exception();
-    }
-
-    std::string dir_entry_name;
-    if (not _curr_checkpoint.read_string(dir_entry_name, entry.entry_name_length)) {
-        return invalid_entry_exception();
-    }
-
-    // Only files may be linked as not to create cycles (directories are created and linked using
-    // CREATE_INODE_AS_DIR_ENTRY)
-    if (not _shard._inodes[entry.entry_inode].is_file()) {
-        return invalid_entry_exception();
-    }
-
-    if (not _shard._inodes[entry.dir_inode].is_directory()) {
-        return invalid_entry_exception();
-    }
-    auto& dir = _shard._inodes[entry.dir_inode].get_directory();
-
-    if (dir.entries.count(dir_entry_name) != 0) {
-        return invalid_entry_exception();
-    }
-
-    _shard.memory_only_add_dir_entry(dir, entry.entry_inode, std::move(dir_entry_name));
-    // TODO: Maybe mtime_ns for modifying directory?
-    return now();
-}
-
-future<> bootstrapping::bootstrap_create_inode_as_dir_entry() {
-    ondisk_create_inode_as_dir_entry_header entry;
-    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.dir_inode) or
-            inode_exists(entry.entry_inode.inode)) {
-        return invalid_entry_exception();
-    }
-
-    std::string dir_entry_name;
-    if (not _curr_checkpoint.read_string(dir_entry_name, entry.entry_name_length)) {
-        return invalid_entry_exception();
-    }
-
-    if (not _shard._inodes[entry.dir_inode].is_directory()) {
-        return invalid_entry_exception();
-    }
-    auto& dir = _shard._inodes[entry.dir_inode].get_directory();
-
-    if (dir.entries.count(dir_entry_name) != 0) {
-        return invalid_entry_exception();
-    }
-
-    _shard.memory_only_create_inode(entry.entry_inode.inode,
-        ondisk_metadata_to_metadata(entry.entry_inode.metadata));
-    _shard.memory_only_add_dir_entry(dir, entry.entry_inode.inode, std::move(dir_entry_name));
-    // TODO: Maybe mtime_ns for modifying directory?
-    return now();
-}
-
-future<> bootstrapping::bootstrap_delete_dir_entry() {
-    ondisk_delete_dir_entry_header entry;
-    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.dir_inode)) {
-        return invalid_entry_exception();
-    }
-
-    std::string dir_entry_name;
-    if (not _curr_checkpoint.read_string(dir_entry_name, entry.entry_name_length)) {
-        return invalid_entry_exception();
-    }
-
-    if (not _shard._inodes[entry.dir_inode].is_directory()) {
-        return invalid_entry_exception();
-    }
-    auto& dir = _shard._inodes[entry.dir_inode].get_directory();
-
-    auto it = dir.entries.find(dir_entry_name);
-    if (it == dir.entries.end()) {
-        return invalid_entry_exception();
-    }
-
-    _shard.memory_only_delete_dir_entry(dir, std::move(dir_entry_name));
-    // TODO: Maybe mtime_ns for modifying directory?
-    return now();
-}
-
-future<> bootstrapping::bootstrap_delete_inode_and_dir_entry() {
-    ondisk_delete_inode_and_dir_entry_header entry;
-    if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.dir_inode) or not inode_exists(entry.inode_to_delete)) {
-        return invalid_entry_exception();
-    }
-
-    std::string dir_entry_name;
-    if (not _curr_checkpoint.read_string(dir_entry_name, entry.entry_name_length)) {
-        return invalid_entry_exception();
-    }
-
-    if (not _shard._inodes[entry.dir_inode].is_directory()) {
-        return invalid_entry_exception();
-    }
-    auto& dir = _shard._inodes[entry.dir_inode].get_directory();
-
-    auto it = dir.entries.find(dir_entry_name);
-    if (it == dir.entries.end()) {
-        return invalid_entry_exception();
-    }
-
-    inode_info& inode_to_delete_info = _shard._inodes.at(entry.inode_to_delete);
-    // We have 2 cases:
-    // - deleting dir entry and inode that it points to
-    // - deleting dir entry and inode that are unrelated
-    // Third case: deleting dir entry and inode of this dir is not possible as we do not permit unlinked directories
-    if (inode_to_delete_info.links_count > (it->second == entry.inode_to_delete)) {
-        return invalid_entry_exception(); // Only unlinked inodes may be deleted
-    }
-    if (inode_to_delete_info.is_directory() and not inode_to_delete_info.get_directory().entries.empty()) {
-        return invalid_entry_exception(); // Only empty directories may be deleted
-    }
-
-    // TODO: there is so much copy & paste above...
-    // TODO: maybe to make ondisk_delete_inode_and_dir_entry_header have ondisk_delete_inode and
-    //       ondisk_delete_dir_entry_header to ease deduplicating code?
-    // TODO: ^ because some check above are different it may be hard here, but in other places should be fine, also
-    // instead of calling bootstrap_delete_dir_entry() and then bootstrap_delete_inode() we could export
-    // some (preferably all) correctness checking logic to separate functions that would allow as to reuse them, thus
-    // reducing duplication to minimum
-
-    _shard.memory_only_delete_dir_entry(dir, std::move(dir_entry_name));
-    _shard.memory_only_delete_inode(entry.inode_to_delete);
-    // TODO: Maybe mtime_ns for modifying directory?
-    return now();
-}
 
 future<> bootstrapping::bootstrap(shard& shard, inode_t root_dir, cluster_id_t first_metadata_cluster_id,
         cluster_range available_clusters, fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id) {
@@ -544,16 +48,531 @@ future<> bootstrapping::bootstrap(shard& shard, inode_t root_dir, cluster_id_t f
     shard._background_futures = now();
     shard._root_dir = root_dir;
     shard._inodes.emplace(root_dir, inode_info {
-        0,
-        0,
-        {}, // TODO: change it to something meaningful
-        inode_info::directory {}
+        .opened_files_count = 0,
+        .links_count = 0,
+        .metadata = {
+            .ftype = file_type::DIRECTORY,
+             // TODO: add other meaningful fields
+        },
+        .contents = inode_info::directory {}
     });
 
     return do_with(bootstrapping(shard, available_clusters),
             [first_metadata_cluster_id, fs_shards_pool_size, fs_shard_id](bootstrapping& bootstrap) {
                 return bootstrap.bootstrap(first_metadata_cluster_id, fs_shards_pool_size, fs_shard_id);
             });
+}
+
+bootstrapping::bootstrapping(shard& shard, cluster_range available_clusters)
+: _shard(shard)
+, _available_clusters(available_clusters)
+, _curr_cluster{ .content = decltype(_curr_cluster.content)::aligned(shard._alignment, shard._cluster_size) }
+{}
+
+future<> bootstrapping::bootstrap(cluster_id_t first_metadata_cluster_id, fs_shard_id_t fs_shards_pool_size,
+        fs_shard_id_t fs_shard_id) {
+    _next_cluster = first_metadata_cluster_id;
+    mlogger.debug(">>>>  Started bootstrapping  <<<<");
+    return do_until([this] { return !_next_cluster; }, [this] {
+        _curr_cluster.id = *_next_cluster;
+        _next_cluster = std::nullopt;
+
+        auto [it, inserted] = _metadata_log_clusters.emplace(_curr_cluster.id);
+        if (!inserted) {
+            return make_exception_future(ml_cluster_loop_exception());
+        }
+        return read_curr_cluster().then([this] {
+            return bootstrap_curr_cluster();
+        });
+    }).then([this, fs_shards_pool_size, fs_shard_id] {
+        mlogger.debug("Data bootstrapping is done");
+        initialize_shard_metadata_log_cbuf();
+        switch (initialize_shard_cluster_allocator()) {
+        case SUCCESS: break;
+        case METADATA_AND_DATA_LOG_OVERLAP: return make_exception_future(ml_and_dl_overlap());
+        case NOSPACE: return make_exception_future(no_more_space_exception());
+        }
+        initialize_shard_inode_allocator(fs_shards_pool_size, fs_shard_id);
+        // TODO: what about orphaned inodes: maybe they are remnants of unlinked files and we need to delete them,
+        //       or maybe not?
+        return now();
+    });
+}
+
+void bootstrapping::initialize_shard_metadata_log_cbuf() {
+    size_t pos = _shard._cluster_size - _curr_cluster.unparsed_content.size();
+    mlogger.debug("Initializing _metadata_log_cbuf: cluster {}, pos {}", _curr_cluster.id, pos);
+    _shard._metadata_log_cbuf = _shard._metadata_log_cbuf->virtual_constructor();
+    _shard._metadata_log_cbuf->init_from_bootstrapped_cluster(_shard._cluster_size,
+            _shard._alignment, cluster_id_to_offset(_curr_cluster.id, _shard._cluster_size), pos);
+}
+
+bootstrapping::ca_init_res bootstrapping::initialize_shard_cluster_allocator() {
+    mlogger.debug("Initializing cluster allocator");
+    std::unordered_set<cluster_id_t> taken_clusters;
+    // TODO: make this asynchronous
+    for (auto&& [inode, inode_info] : _shard._inodes) {
+        if (!inode_info.is_file()) {
+            continue;
+        }
+        for (auto&& [foffset, data_vec] : inode_info.get_file().data) {
+            std::visit(overloaded {
+                [](const inode_data_vec::in_mem_data&) {},
+                [this, &taken_clusters](const inode_data_vec::on_disk_data& odd) {
+                    auto cid = offset_to_cluster_id(odd.device_offset, _shard._cluster_size);
+                    taken_clusters.emplace(cid);
+                },
+                [](const inode_data_vec::hole_data&) {},
+            }, data_vec.data_location);
+        }
+    }
+    // TODO: make this asynchronous
+    // Check that data clusters don't overlap with metadata_log
+    for (auto it = _metadata_log_clusters.begin(); it != _metadata_log_clusters.end();) {
+        auto nh = _metadata_log_clusters.extract(it++);
+        auto irt = taken_clusters.insert(std::move(nh));
+        if (!irt.inserted) {
+            mlogger.debug("^ Error: metadata and data log overlap by using the same cluster: {}", irt.node.value());
+            return METADATA_AND_DATA_LOG_OVERLAP;
+        }
+    }
+
+    // TODO: maybe check that writes do not overlap with other (still valid) writes on disk and do not use metadata_log clusters
+
+    std::deque<cluster_id_t> free_clusters;
+    for (auto cid : boost::irange(_available_clusters.beg, _available_clusters.end)) {
+        if (taken_clusters.find(cid) == taken_clusters.end()) {
+            free_clusters.emplace_back(cid);
+        }
+    }
+
+    mlogger.debug("free clusters: {}", free_clusters.size());
+    _shard._cluster_allocator = cluster_allocator(std::move(taken_clusters), std::move(free_clusters));
+
+    auto cid_opt = _shard._cluster_allocator.alloc();
+    if (!cid_opt) {
+        mlogger.debug("^ Error: could not allocate cluster for medium data log");
+        return NOSPACE;
+    }
+
+    _shard._medium_data_log_cw = _shard._medium_data_log_cw->virtual_constructor();
+    _shard._medium_data_log_cw->init(_shard._cluster_size, _shard._alignment,
+            cluster_id_to_offset(*cid_opt, _shard._cluster_size));
+    return SUCCESS;
+}
+
+void bootstrapping::initialize_shard_inode_allocator(fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id) {
+    // Reset _inode_allocator
+    std::optional<inode_t> latest_allocated_inode;
+    if (!_shard._inodes.empty()) {
+        latest_allocated_inode =_shard._inodes.rbegin()->first;
+    }
+    _shard._inode_allocator = shard_inode_allocator(fs_shards_pool_size, fs_shard_id, latest_allocated_inode);
+}
+
+future<> bootstrapping::read_curr_cluster() {
+    disk_offset_t curr_cluster_disk_offset = cluster_id_to_offset(_curr_cluster.id, _shard._cluster_size);
+    mlogger.debug("Bootstrapping from cluster {}...", _curr_cluster.id);
+    return _shard._device.read(curr_cluster_disk_offset, _curr_cluster.content.get_write(),
+            _shard._cluster_size).then([this](size_t bytes_read) {
+        if (bytes_read != _shard._cluster_size) {
+            mlogger.debug("^ Error: partial read {} of {}", bytes_read, _shard._cluster_size);
+            return make_exception_future(failed_ml_cluster_read_exception());
+        }
+
+        mlogger.debug("Read cluster {}", _curr_cluster.id);
+        _curr_cluster.unparsed_content =
+            string_view(reinterpret_cast<const char*>(_curr_cluster.content.get()), _shard._cluster_size);
+        return now();
+    });
+}
+
+namespace {
+enum [[nodiscard]] rv_checkpoint_error {
+    NO_MEM,
+    BUFF_TOO_SMALL,
+    INVALID_ENTRY_TYPE,
+    INVALID_CHECKSUM
+};
+} // namespace
+
+// Returns checkpointed data or error
+static val_or_err<string_view, rv_checkpoint_error> read_and_validate_checkpoint(string_view& buff, disk_offset_t cluster_size) {
+    mlogger.debug("Processing checkpoint at {}", cluster_size - buff.size());
+    auto rdres = mle::read<mle::checkpoint>(buff);
+    if (!rdres) {
+        switch (rdres.error()) {
+        case mle::NO_MEM:
+            mlogger.debug("^ Not enough memory");
+            return NO_MEM;
+        case mle::TOO_SMALL:
+            mlogger.debug("^ buff it too small for checkpoint");
+            return BUFF_TOO_SMALL;
+        case mle::INVALID_ENTRY_TYPE:
+            mlogger.debug("^ Entry type is invalid");
+            return INVALID_ENTRY_TYPE;
+        }
+        __builtin_unreachable();
+    }
+
+    auto cp = rdres.value();
+    if (cp.checkpointed_data_length > buff.size()) {
+        mlogger.debug("^ checkpoint's data length is too big: {} > {}", cp.checkpointed_data_length, buff.size());
+        return BUFF_TOO_SMALL;
+    }
+
+    boost::crc_32_type crc;
+    crc.process_bytes(buff.data(), cp.checkpointed_data_length);
+    crc.process_bytes(&cp.checkpointed_data_length, sizeof(cp.checkpointed_data_length));
+    if (crc.checksum() != cp.crc32_checksum) {
+        mlogger.debug("^ CRC code does not match: computed = {}, read = {}", crc.checksum(), (uint32_t)cp.crc32_checksum);
+        return INVALID_CHECKSUM;
+    }
+
+    auto res = buff.substr(0, cp.checkpointed_data_length);
+    buff.remove_prefix(cp.checkpointed_data_length);
+    return res;
+}
+
+future<> bootstrapping::bootstrap_curr_cluster() {
+    // Process cluster: the data layout format is:
+    // | checkpoint1 | data1... | checkpoint2 | data2... | ... |
+    return repeat([this]() -> future<stop_iteration> {
+        assert(!_next_cluster); // Checkpointed mle::next_metadata_cluster ends bootstrapping of the current cluster
+        // Align before reading checkpoint
+        _curr_cluster.unparsed_content.remove_prefix(
+            mod_by_power_of_2(_curr_cluster.unparsed_content.size(), _shard._alignment));
+        deferred_action restore_unparsed_content = [this, bkp = _curr_cluster.unparsed_content] {
+            _curr_cluster.unparsed_content = bkp;
+        };
+
+        auto rv_cp_res = read_and_validate_checkpoint(_curr_cluster.unparsed_content, _shard._cluster_size);
+        if (!rv_cp_res) {
+            switch (rv_cp_res.error()) {
+            case NO_MEM: return make_exception_future<stop_iteration>(std::bad_alloc());
+            case BUFF_TOO_SMALL:
+            case INVALID_ENTRY_TYPE:
+            case INVALID_CHECKSUM:
+                mlogger.debug("^ Invalid checkpoint => bootstrapping ends");
+                return make_ready_future<stop_iteration>(stop_iteration::yes);
+            }
+        }
+
+        _curr_cluster.curr_checkpoint = rv_cp_res.value();
+        mlogger.debug("^ checkpoint is correct, size {}", _curr_cluster.curr_checkpoint.size());
+        return bootstrap_checkpointed_data().then([this, ruc = std::move(restore_unparsed_content)] () mutable {
+            ruc.cancel();
+            return make_ready_future<stop_iteration>(stop_iteration(_next_cluster.has_value()));
+        });
+    }).then([] {
+        mlogger.debug("Cluster bootstrapping finished");
+    });
+}
+
+static auto invalid_entry_exception() {
+    return make_exception_future(ml_invalid_entry_exception());
+}
+
+template<>
+future<> bootstrapping::bootstrap_entry<mle::next_metadata_cluster>(mle::next_metadata_cluster& entry) {
+    mlogger.debug("Entry: next metadata cluster is {}", entry.cluster_id);
+    if (_next_cluster) {
+        mlogger.debug("^ Error: only one mle::next_metadata_cluster may appear per cluster");
+        return invalid_entry_exception();
+    }
+    if (_metadata_log_clusters.find(entry.cluster_id) != _metadata_log_clusters.end()) {
+        mlogger.debug("^ Error: cluster is already used by metadata log (loops are forbidden)");
+        return invalid_entry_exception();
+    }
+    _next_cluster = entry.cluster_id;
+    return now();
+}
+
+template<>
+future<> bootstrapping::bootstrap_entry<mle::create_inode>(mle::create_inode& entry) {
+    mlogger.debug("Entry: create inode {} of type {}", entry.inode, [&entry] {
+        switch (entry.metadata.ftype) {
+        case file_type::REGULAR_FILE: return "REG";
+        case file_type::DIRECTORY: return "DIR";
+        }
+        return "???";
+    }());
+    if (inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: inode already exist");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_create_inode(entry.inode, entry.metadata);
+    return now();
+}
+
+bool bootstrapping::delete_inode_is_valid(const mle::delete_inode& entry) const noexcept {
+    if (!inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: inode does not exist");
+        return false;
+    }
+    const inode_info& inode_info = _shard._inodes.at(entry.inode);
+    if (inode_info.is_directory() and !inode_info.get_directory().entries.empty()) {
+        mlogger.debug("^ Error: cannot delete inode that is a non-empty directory");
+        return false;
+    }
+    if (inode_info.links_count > 0) {
+        mlogger.debug("^ Error: only unlinked inodes may be deleted");
+        return false;
+    }
+
+    return true;
+}
+
+template<>
+future<> bootstrapping::bootstrap_entry<mle::delete_inode>(mle::delete_inode& entry) {
+    mlogger.debug("Entry: delete inode {}", entry.inode);
+    if (!delete_inode_is_valid(entry)) {
+        return invalid_entry_exception();
+    }
+    _shard.memory_only_delete_inode(entry.inode);
+    return now();
+}
+
+template<>
+future<> bootstrapping::bootstrap_entry<mle::small_write>(mle::small_write& entry) {
+    mlogger.debug("Entry: small write to {} at {} of size {}", entry.inode, entry.offset, entry.data.size());
+    if (!inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: inode does not exist");
+        return invalid_entry_exception();
+    }
+    if (!_shard._inodes[entry.inode].is_file()) {
+        mlogger.debug("^ Error: inode is not a regular file");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_small_write(entry.inode, entry.offset, std::move(entry.data));
+    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
+    return now();
+}
+
+template<>
+future<> bootstrapping::bootstrap_entry<mle::medium_write>(mle::medium_write& entry) {
+    mlogger.debug("Entry: medium write to {} at {}, placed on disk at [{}, {})", entry.inode, entry.offset, entry.drange.beg, entry.drange.end);
+    if (!inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: inode does not exist");
+        return invalid_entry_exception();
+    }
+    if (!_shard._inodes[entry.inode].is_file()) {
+        mlogger.debug("^ Error: inode is not a regular file");
+        return invalid_entry_exception();
+    }
+
+    cluster_id_t beg_cluster_id = offset_to_cluster_id(entry.drange.beg, _shard._cluster_size);
+    cluster_id_t end_cluster_id = offset_to_cluster_id(entry.drange.end, _shard._cluster_size);
+    if (entry.drange.beg >= entry.drange.end or beg_cluster_id != end_cluster_id) {
+        mlogger.debug("^ Error: disk offset range is invalid");
+        return invalid_entry_exception();
+    }
+    if (beg_cluster_id < _available_clusters.beg or _available_clusters.end <= beg_cluster_id) {
+        mlogger.debug("^ Error: cluster id is out of range");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_disk_write(entry.inode, entry.offset, entry.drange.beg, entry.drange.size());
+    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
+    return now();
+}
+
+template<>
+future<> bootstrapping::bootstrap_entry<mle::large_write_without_time>(mle::large_write_without_time& entry) {
+    mlogger.debug("Entry: large write to {} at {}, placed in cluster: {}", entry.inode, entry.offset, entry.data_cluster);
+    if (!inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: inode does not exist");
+        return invalid_entry_exception();
+    }
+    if (!_shard._inodes[entry.inode].is_file()) {
+        mlogger.debug("^ Error: inode is not a regular file");
+        return invalid_entry_exception();
+    }
+    if (entry.data_cluster < _available_clusters.beg or _available_clusters.end <= entry.data_cluster) {
+        mlogger.debug("^ Error: cluster id is out of range");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_disk_write(entry.inode, entry.offset,
+            cluster_id_to_offset(entry.data_cluster, _shard._cluster_size), _shard._cluster_size);
+    return now();
+}
+
+template<>
+future<> bootstrapping::bootstrap_entry<mle::large_write>(mle::large_write& entry) {
+    return bootstrap_entry(entry.lwwt).then([this, entry] {
+        _shard.memory_only_update_mtime(entry.lwwt.inode, entry.time_ns);
+    });
+}
+
+template<>
+future<> bootstrapping::bootstrap_entry<mle::truncate>(mle::truncate& entry) {
+    mlogger.debug("Entry: truncate {} to size {}", entry.inode, entry.size);
+    if (!inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: inode does not exist");
+        return invalid_entry_exception();
+    }
+    if (!_shard._inodes[entry.inode].is_file()) {
+        mlogger.debug("^ Error: inode is not a regular file");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_truncate(entry.inode, entry.size);
+    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
+    return now();
+}
+
+struct create_dentry_with_flags {
+    inode_t inode;
+    std::string& name;
+    inode_t dir_inode;
+    bool allow_linking_directory;
+};
+
+template<>
+future<> bootstrapping::bootstrap_entry<create_dentry_with_flags>(create_dentry_with_flags& entry) {
+    mlogger.debug("Entry: create dentry in {}: \"{}\" -> {}", entry.dir_inode, entry.name, entry.inode);
+    if (!inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: dentry inode does not exist");
+        return invalid_entry_exception();
+    }
+    if (!inode_exists(entry.dir_inode)) {
+        mlogger.debug("^ Error: dir inode does not exist");
+        return invalid_entry_exception();
+    }
+
+    auto& inode_info = _shard._inodes.at(entry.inode);
+    auto& dir_inode_info = _shard._inodes.at(entry.dir_inode);
+    if (!entry.allow_linking_directory && inode_info.is_directory()) {
+        mlogger.debug("^ Error: cannot link directory");
+        return invalid_entry_exception();
+    }
+    if (!dir_inode_info.is_directory()) {
+        mlogger.debug("^ Error: dir inode is not a directory");
+        return invalid_entry_exception();
+    }
+    auto& dir = dir_inode_info.get_directory();
+    if (dir.entries.count(entry.name) != 0) {
+        mlogger.debug("^ Error: name is taken by other dentry");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_create_dentry(dir, entry.inode, std::move(entry.name));
+    // TODO: Maybe time_ns for modifying directory?
+    return now();
+}
+
+template<>
+future<> bootstrapping::bootstrap_entry<mle::create_dentry>(mle::create_dentry& entry) {
+    create_dentry_with_flags new_entry {
+        .inode = entry.inode,
+        .name = entry.name,
+        .dir_inode = entry.dir_inode,
+        .allow_linking_directory = false, // Only files may be linked as not to create cycles (directories are
+                                          // created and linked using mle::create_inode_as_dentry
+    };
+    // Taking reference here is OK, because new_entry won't be used as soon as future<> will be constructed
+    return bootstrap_entry(new_entry);
+}
+
+template<>
+future<> bootstrapping::bootstrap_entry<mle::create_inode_as_dentry>(mle::create_inode_as_dentry& entry) {
+    mlogger.debug("Compound entry: create inode as dentry");
+    return bootstrap_entry(entry.inode).then([this, &entry] {
+        deferred_action rollback = [this, inode = entry.inode.inode] {
+            _shard.memory_only_delete_inode(inode);
+        };
+
+        create_dentry_with_flags new_entry {
+            .inode = entry.inode.inode,
+            .name = entry.name,
+            .dir_inode = entry.dir_inode,
+            .allow_linking_directory = true,
+        };
+
+        // Taking reference here is OK, because new_entry won't be used as soon as future<> will be constructed
+        return bootstrap_entry(new_entry).then([rollback = std::move(rollback)]() mutable {
+            rollback.cancel();
+        });
+    });
+
+    return now();
+}
+
+template<>
+future<> bootstrapping::bootstrap_entry<mle::delete_dentry>(mle::delete_dentry& entry) {
+    mlogger.debug("Entry: delete dentry in {}: \"{}\"", entry.dir_inode, entry.name);
+    if (!inode_exists(entry.dir_inode)) {
+        mlogger.debug("^ Error: dir inode does not exist");
+        return invalid_entry_exception();
+    }
+
+    auto& dir_inode_info = _shard._inodes.at(entry.dir_inode);
+    if (!dir_inode_info.is_directory()) {
+        mlogger.debug("^ Error: dir inode is not a directory");
+        return invalid_entry_exception();
+    }
+    auto& dir = dir_inode_info.get_directory();
+    if (dir.entries.find(entry.name) == dir.entries.end()) {
+        mlogger.debug("^ Error: dentry does not exist");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_delete_dentry(dir, entry.name);
+    // TODO: Maybe time_ns for modifying directory?
+    return now();
+}
+
+template<>
+future<> bootstrapping::bootstrap_entry<mle::delete_inode_and_dentry>(mle::delete_inode_and_dentry& entry) {
+    mlogger.debug("Compound entry: delete inode {} and delete dentry", entry.di.inode);
+    // We have 2 cases:
+    // - deleting dir entry and inode that it points to
+    // - deleting dir entry and inode that are unrelated
+    // Third case: deleting dir entry and inode of this dir is not possible as we do not permit unlinked directories
+    if (!delete_inode_is_valid(entry.di)) {
+        return invalid_entry_exception();
+    }
+
+    return bootstrap_entry(entry.dd).then([this, &entry] {
+        assert(delete_inode_is_valid(entry.di));
+        _shard.memory_only_delete_inode(entry.di.inode);
+    });
+}
+
+bool bootstrapping::inode_exists(inode_t inode) const noexcept {
+    return _shard._inodes.find(inode) != _shard._inodes.end();
+}
+
+future<> bootstrapping::bootstrap_checkpointed_data() {
+    return do_until([this] { return _curr_cluster.curr_checkpoint.empty(); }, [this] {
+        auto rd_res = metadata_log::entries::read_any(_curr_cluster.curr_checkpoint);
+        if (!rd_res) {
+            switch (rd_res.error()) {
+            case mle::NO_MEM:
+                mlogger.debug("Error: reading entry: not enough memory");
+                return make_exception_future(std::bad_alloc());
+            case mle::TOO_SMALL:
+                mlogger.debug("Error: reading entry: entry does not fit, although checkpoint tells otherwise");
+                return invalid_entry_exception();
+            case mle::INVALID_ENTRY_TYPE:
+                mlogger.debug("Error: reading entry: invalid entry type, although checkpoint tells it should be valid");
+                return invalid_entry_exception();
+            }
+        }
+
+        return do_with(std::move(rd_res.value()), [this](auto& val) {
+            return std::visit(overloaded {
+                [](mle::checkpoint&) {
+                    mlogger.debug("Error: checkpoint cannot appear as part of checkpointed data");
+                    return invalid_entry_exception();
+                },
+                [this](auto& entry) { return this->bootstrap_entry(entry); },
+            }, val);
+        });
+    });
 }
 
 } // namespace seastar::fs::backend

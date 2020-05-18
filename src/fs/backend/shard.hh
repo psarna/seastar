@@ -21,31 +21,15 @@
 
 #pragma once
 
-#include "fs/cluster.hh"
+#include "fs/clock.hh"
 #include "fs/cluster_allocator.hh"
 #include "fs/cluster_writer.hh"
-#include "fs/inode.hh"
 #include "fs/inode_info.hh"
-#include "fs/metadata_disk_entries.hh"
-#include "fs/metadata_to_disk_buffer.hh"
-#include "fs/units.hh"
-#include "fs/unix_metadata.hh"
+#include "fs/metadata_log/to_disk_buffer.hh"
 #include "fs/value_shared_lock.hh"
-#include "seastar/core/file-types.hh"
-#include "seastar/core/future-util.hh"
-#include "seastar/core/future.hh"
 #include "seastar/core/shared_future.hh"
-#include "seastar/core/shared_ptr.hh"
-#include "seastar/core/temporary_buffer.hh"
 #include "seastar/fs/exceptions.hh"
 #include "seastar/fs/stat.hh"
-
-#include <chrono>
-#include <cstddef>
-#include <exception>
-#include <type_traits>
-#include <utility>
-#include <variant>
 
 namespace seastar::fs::backend {
 
@@ -57,7 +41,7 @@ class shard {
     shared_future<> _background_futures = now(); // Background tasks
 
     // Takes care of writing metadata log entries to current metadata log cluster on device
-    shared_ptr<metadata_to_disk_buffer> _metadata_log_cbuf;
+    shared_ptr<metadata_log::to_disk_buffer> _metadata_log_cbuf;
     // Takes care of writing medium writes to current medium data log cluster on device
     shared_ptr<cluster_writer> _medium_data_log_cw;
 
@@ -67,6 +51,8 @@ class shard {
     // Memory representation of fs metadata
     inode_t _root_dir;
     std::map<inode_t, inode_info> _inodes;
+
+    shared_ptr<Clock> _clock;
 
     // Locks are used to ensure metadata consistency while allowing concurrent usage.
     //
@@ -172,7 +158,7 @@ class shard {
 
 public:
     shard(block_device device, unit_size_t cluster_size, unit_size_t alignment,
-            shared_ptr<metadata_to_disk_buffer> metadata_log_cbuf, shared_ptr<cluster_writer> medium_data_log_cw);
+            shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf, shared_ptr<cluster_writer> medium_data_log_cw, shared_ptr<Clock> clock);
 
     shard(block_device device, unit_size_t cluster_size, unit_size_t alignment);
 
@@ -201,8 +187,8 @@ private:
     void memory_only_disk_write(inode_t inode, file_offset_t file_offset, disk_offset_t disk_offset, size_t write_len);
     void memory_only_update_mtime(inode_t inode, decltype(unix_metadata::mtime_ns) mtime_ns);
     void memory_only_truncate(inode_t inode, disk_offset_t size);
-    void memory_only_add_dir_entry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name);
-    void memory_only_delete_dir_entry(inode_info::directory& dir, std::string entry_name);
+    void memory_only_create_dentry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name);
+    void memory_only_delete_dentry(inode_info::directory& dir, const std::string& entry_name);
 
     template<class Func>
     void schedule_background_task(Func&& task) {
@@ -226,14 +212,14 @@ private:
         NO_SPACE
     };
 
-    template<class... Args>
-    [[nodiscard]] append_result append_ondisk_entry(Args&&... args) {
+    template<class Entry>
+    [[nodiscard]] append_result append_metadata_log(const Entry& entry) {
         using AR = append_result;
         // TODO: maybe check for errors on _background_futures to expose previous errors?
-        switch (_metadata_log_cbuf->append(args...)) {
-        case metadata_to_disk_buffer::APPENDED:
+        switch (_metadata_log_cbuf->append(entry)) {
+        case metadata_log::to_disk_buffer::APPENDED:
             return AR::APPENDED;
-        case metadata_to_disk_buffer::TOO_BIG:
+        case metadata_log::to_disk_buffer::TOO_BIG:
             break;
         }
 
@@ -244,10 +230,10 @@ private:
             break;
         }
 
-        switch (_metadata_log_cbuf->append(args...)) {
-        case metadata_to_disk_buffer::APPENDED:
+        switch (_metadata_log_cbuf->append(entry)) {
+        case metadata_log::to_disk_buffer::APPENDED:
             return AR::APPENDED;
-        case metadata_to_disk_buffer::TOO_BIG:
+        case metadata_log::to_disk_buffer::TOO_BIG:
             return AR::TOO_BIG;
         }
 
@@ -268,7 +254,7 @@ private:
     future<inode_t> path_lookup(const std::string& path) const;
 
 public:
-    template<class Func>
+    template<class Func> // TODO: noncopyable_function
     future<> iterate_directory(const std::string& dir_path, Func func) {
         static_assert(std::is_invocable_r_v<future<>, Func, const std::string&> or
                 std::is_invocable_r_v<future<stop_iteration>, Func, const std::string&>);
@@ -313,9 +299,9 @@ public:
         });
     }
 
-    stat_data stat(inode_t inode) const;
+    fs::stat_data stat(inode_t inode) const;
 
-    stat_data stat(const std::string& path) const;
+    fs::stat_data stat(const std::string& path) const;
 
     // Returns size of the file or throws exception iff @p inode is invalid
     file_offset_t file_size(inode_t inode) const;

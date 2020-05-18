@@ -685,6 +685,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/bitwise.hh
     src/fs/bootstrap_record.cc
     src/fs/bootstrap_record.hh
+    src/fs/clock.hh
     src/fs/cluster.hh
     src/fs/cluster_allocator.cc
     src/fs/cluster_allocator.hh
@@ -695,10 +696,9 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/file.cc
     src/fs/inode.hh
     src/fs/inode_info.hh
-    src/fs/metadata_disk_entries.hh
     src/fs/metadata_log/entries.cc
     src/fs/metadata_log/entries.hh
-    src/fs/metadata_to_disk_buffer.hh
+    src/fs/metadata_log/to_disk_buffer.hh
     src/fs/path.hh
     src/fs/range.hh
     src/fs/to_disk_buffer.hh
@@ -706,6 +706,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/unix_metadata.hh
     src/fs/val_or_err.hh
     src/fs/value_shared_lock.hh
+    src/fs/variant.hh
   )
 endif()
 

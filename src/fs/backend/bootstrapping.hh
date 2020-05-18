@@ -21,125 +21,71 @@
 
 #pragma once
 
-#include "fs/backend/shard.hh"
-#include "fs/bitwise.hh"
 #include "fs/cluster.hh"
 #include "fs/inode.hh"
-#include "fs/inode_info.hh"
-#include "fs/metadata_disk_entries.hh"
-#include "fs/metadata_to_disk_buffer.hh"
-#include "fs/units.hh"
-#include "seastar/core/do_with.hh"
-#include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
 #include "seastar/core/temporary_buffer.hh"
 
-#include <boost/crc.hpp>
-#include <cstddef>
-#include <cstring>
+#include <optional>
+#include <string_view>
 #include <unordered_set>
-#include <variant>
+
+namespace seastar::fs::metadata_log::entries {
+struct delete_inode;
+} // namespace seastar::fs::metadata_log::entries
 
 namespace seastar::fs::backend {
 
-// TODO: add a comment about what it is
-class data_reader {
-    const uint8_t* _data = nullptr;
-    size_t _size = 0;
-    size_t _pos = 0;
-    size_t _last_checkpointed_pos = 0;
-
-public:
-    data_reader() = default;
-
-    data_reader(const uint8_t* data, size_t size) : _data(data), _size(size) {}
-
-    size_t curr_pos() const noexcept { return _pos; }
-
-    size_t last_checkpointed_pos() const noexcept { return _last_checkpointed_pos; }
-
-    size_t bytes_left() const noexcept { return _size - _pos; }
-
-    void align_curr_pos(size_t alignment) noexcept { _pos = round_up_to_multiple_of_power_of_2(_pos, alignment); }
-
-    void checkpoint_curr_pos() noexcept { _last_checkpointed_pos = _pos; }
-
-    // Returns whether the reading was successful
-    bool read(void* destination, size_t size);
-
-    // Returns whether the reading was successful
-    template<class T>
-    bool read_entry(T& entry) noexcept {
-        return read(&entry, sizeof(entry));
-    }
-
-    // Returns whether the reading was successful
-    bool read_string(std::string& str, size_t size);
-
-    std::optional<temporary_buffer<uint8_t>> read_tmp_buff(size_t size);
-
-    // Returns whether the processing was successful
-    bool process_crc_without_reading(boost::crc_32_type& crc, size_t size);
-
-    std::optional<data_reader> extract(size_t size);
-};
+class shard;
 
 class bootstrapping {
     shard& _shard;
-    cluster_range _available_clusters;
-    std::unordered_set<cluster_id_t> _taken_clusters;
+    const cluster_range _available_clusters;
+    std::unordered_set<cluster_id_t> _metadata_log_clusters;
+
     std::optional<cluster_id_t> _next_cluster;
-    temporary_buffer<uint8_t> _curr_cluster_data;
-    data_reader _curr_cluster;
-    data_reader _curr_checkpoint;
 
-    bootstrapping(shard& shard, cluster_range available_clusters);
-
-    future<> bootstrap(cluster_id_t first_metadata_cluster_id, fs_shard_id_t fs_shards_pool_size,
-            fs_shard_id_t fs_shard_id);
-
-    future<> bootstrap_cluster(cluster_id_t curr_cluster);
-
-    static auto invalid_entry_exception() {
-        return make_exception_future<>(std::runtime_error("Invalid metadata log entry"));
-    }
-
-    future<> bootstrap_read_cluster();
-
-    // Returns whether reading and checking was successful
-    bool read_and_check_checkpoint();
-
-    future<> bootstrap_checkpointed_data();
-
-    future<> bootstrap_next_metadata_cluster();
-
-    bool inode_exists(inode_t inode);
-
-    future<> bootstrap_create_inode();
-
-    future<> bootstrap_delete_inode();
-
-    future<> bootstrap_small_write();
-
-    future<> bootstrap_medium_write();
-
-    future<> bootstrap_large_write();
-
-    future<> bootstrap_large_write_without_mtime();
-
-    future<> bootstrap_truncate();
-
-    future<> bootstrap_add_dir_entry();
-
-    future<> bootstrap_create_inode_as_dir_entry();
-
-    future<> bootstrap_delete_dir_entry();
-
-    future<> bootstrap_delete_inode_and_dir_entry();
+    struct curr_cluster {
+        cluster_id_t id;
+        temporary_buffer<uint8_t> content;
+        std::string_view unparsed_content;
+        std::string_view curr_checkpoint;
+    } _curr_cluster;
 
 public:
     static future<> bootstrap(shard& shard, inode_t root_dir, cluster_id_t first_metadata_cluster_id,
             cluster_range available_clusters, fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id);
+
+private:
+    bootstrapping(shard& shard, cluster_range available_clusters);
+
+    future<> bootstrap(cluster_id_t first_metadata_cluster_id, fs_shard_id_t shards_pool_size,
+            fs_shard_id_t shard_id);
+
+    void initialize_shard_metadata_log_cbuf();
+
+    enum [[nodiscard]] ca_init_res {
+        SUCCESS,
+        METADATA_AND_DATA_LOG_OVERLAP,
+        NOSPACE
+    };
+
+    ca_init_res initialize_shard_cluster_allocator();
+
+    void initialize_shard_inode_allocator(fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id);
+
+    future<> read_curr_cluster();
+    // Bootstraps already read _curr_cluster
+    future<> bootstrap_curr_cluster();
+
+    template<class Entry>
+    future<> bootstrap_entry(Entry& entry);
+
+    bool delete_inode_is_valid(const metadata_log::entries::delete_inode& entry) const noexcept;
+
+    bool inode_exists(inode_t inode) const noexcept;
+
+    future<> bootstrap_checkpointed_data();
 };
 
 } // namespace seastar::fs::backend

@@ -85,4 +85,26 @@ struct path_component_not_directory_exception : public path_lookup_exception {
     const char* what() const noexcept override { return "A component used as a directory is not a directory"; }
 };
 
+struct bootstrap_exception : public fs_exception {
+    const char* what() const noexcept override = 0;
+};
+
+struct ml_cluster_loop_exception : public bootstrap_exception {
+    const char* what() const noexcept override { return "Cannot bootstrap already bootstrapped metadata log cluster"; }
+};
+
+struct failed_ml_cluster_read_exception : public bootstrap_exception {
+    const char* what() const noexcept override { return "Failed to read whole cluster of the metadata log"; }
+};
+
+struct ml_invalid_entry_exception : public bootstrap_exception {
+    const char* what() const noexcept override { return "Invalid metadata log entry"; }
+};
+
+struct ml_and_dl_overlap : public bootstrap_exception {
+    const char* what() const noexcept override {
+        return "Metadata log and data log use the same cluster (it is forbidden)";
+    }
+};
+
 } // namespace seastar::fs
