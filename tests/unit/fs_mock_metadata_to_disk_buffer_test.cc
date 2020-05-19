@@ -19,12 +19,12 @@
  * Copyright (C) 2020 ScyllaDB
  */
 
-#include "fs_metadata_common.hh"
+#include "fs/backend/shard.hh"
 #include "fs/metadata_disk_entries.hh"
-#include "fs/metadata_log.hh"
 #include "fs/metadata_to_disk_buffer.hh"
-#include "fs_mock_metadata_to_disk_buffer.hh"
+#include "fs_metadata_common.hh"
 #include "fs_mock_block_device.hh"
+#include "fs_mock_metadata_to_disk_buffer.hh"
 
 #include <seastar/core/print.hh>
 #include <seastar/core/temporary_buffer.hh>

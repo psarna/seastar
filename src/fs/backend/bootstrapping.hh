@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "fs/backend/shard.hh"
 #include "fs/bitwise.hh"
 #include "fs/cluster.hh"
 #include "fs/inode.hh"
@@ -28,7 +29,6 @@
 #include "fs/metadata_disk_entries.hh"
 #include "fs/metadata_to_disk_buffer.hh"
 #include "fs/units.hh"
-#include "fs/metadata_log.hh"
 #include "seastar/core/do_with.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
@@ -40,7 +40,7 @@
 #include <unordered_set>
 #include <variant>
 
-namespace seastar::fs {
+namespace seastar::fs::backend {
 
 // TODO: add a comment about what it is
 class data_reader {
@@ -84,8 +84,8 @@ public:
     std::optional<data_reader> extract(size_t size);
 };
 
-class metadata_log_bootstrap {
-    metadata_log& _metadata_log;
+class bootstrapping {
+    shard& _shard;
     cluster_range _available_clusters;
     std::unordered_set<cluster_id_t> _taken_clusters;
     std::optional<cluster_id_t> _next_cluster;
@@ -93,7 +93,7 @@ class metadata_log_bootstrap {
     data_reader _curr_cluster;
     data_reader _curr_checkpoint;
 
-    metadata_log_bootstrap(metadata_log& metadata_log, cluster_range available_clusters);
+    bootstrapping(shard& shard, cluster_range available_clusters);
 
     future<> bootstrap(cluster_id_t first_metadata_cluster_id, fs_shard_id_t fs_shards_pool_size,
             fs_shard_id_t fs_shard_id);
@@ -138,8 +138,8 @@ class metadata_log_bootstrap {
     future<> bootstrap_delete_inode_and_dir_entry();
 
 public:
-    static future<> bootstrap(metadata_log& metadata_log, inode_t root_dir, cluster_id_t first_metadata_cluster_id,
+    static future<> bootstrap(shard& shard, inode_t root_dir, cluster_id_t first_metadata_cluster_id,
             cluster_range available_clusters, fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id);
 };
 
-} // namespace seastar::fs
+} // namespace seastar::fs::backend

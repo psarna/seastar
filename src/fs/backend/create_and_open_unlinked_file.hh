@@ -21,16 +21,16 @@
 
 #pragma once
 
+#include "fs/backend/shard.hh"
 #include "fs/metadata_disk_entries.hh"
-#include "fs/metadata_log.hh"
 #include "seastar/core/future.hh"
 
-namespace seastar::fs {
+namespace seastar::fs::backend {
 
 class create_and_open_unlinked_file_operation {
-    metadata_log& _metadata_log;
+    shard& _shard;
 
-    create_and_open_unlinked_file_operation(metadata_log& metadata_log) : _metadata_log(metadata_log) {}
+    create_and_open_unlinked_file_operation(shard& shard) : _shard(shard) {}
 
     future<inode_t> create_and_open_unlinked_file(file_permissions perms) {
         using namespace std::chrono;
@@ -44,20 +44,20 @@ class create_and_open_unlinked_file_operation {
             curr_time_ns
         };
 
-        inode_t new_inode = _metadata_log._inode_allocator.alloc();
+        inode_t new_inode = _shard._inode_allocator.alloc();
         ondisk_create_inode ondisk_entry {
             new_inode,
             false,
             metadata_to_ondisk_metadata(unx_mtdt)
         };
 
-        switch (_metadata_log.append_ondisk_entry(ondisk_entry)) {
-        case metadata_log::append_result::TOO_BIG:
+        switch (_shard.append_ondisk_entry(ondisk_entry)) {
+        case shard::append_result::TOO_BIG:
             return make_exception_future<inode_t>(cluster_size_too_small_to_perform_operation_exception());
-        case metadata_log::append_result::NO_SPACE:
+        case shard::append_result::NO_SPACE:
             return make_exception_future<inode_t>(no_more_space_exception());
-        case metadata_log::append_result::APPENDED:
-            inode_info& new_inode_info = _metadata_log.memory_only_create_inode(new_inode, false, unx_mtdt);
+        case shard::append_result::APPENDED:
+            inode_info& new_inode_info = _shard.memory_only_create_inode(new_inode, false, unx_mtdt);
             // We don't have to lock, as there was no context switch since the allocation of the inode number
             ++new_inode_info.opened_files_count;
             return make_ready_future<inode_t>(new_inode);
@@ -66,12 +66,12 @@ class create_and_open_unlinked_file_operation {
     }
 
 public:
-    static future<inode_t> perform(metadata_log& metadata_log, file_permissions perms) {
-        return do_with(create_and_open_unlinked_file_operation(metadata_log),
+    static future<inode_t> perform(shard& shard, file_permissions perms) {
+        return do_with(create_and_open_unlinked_file_operation(shard),
                 [perms = std::move(perms)](auto& obj) {
             return obj.create_and_open_unlinked_file(std::move(perms));
         });
     }
 };
 
-} // namespace seastar::fs
+} // namespace seastar::fs::backend

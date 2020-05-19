@@ -20,9 +20,9 @@
  */
 
 
+#include "fs/backend/write.hh"
 #include "fs/bitwise.hh"
 #include "fs/cluster.hh"
-#include "fs/metadata_log_operations/write.hh"
 #include "fs/units.hh"
 #include "fs_metadata_common.hh"
 #include "fs_mock_block_device.hh"
@@ -65,31 +65,31 @@ constexpr write_type get_write_type(size_t len) noexcept {
             (len >= default_cluster_size ? write_type::LARGE : write_type::MEDIUM);
 }
 
-auto default_init_metadata_log() {
-    return init_metadata_log(default_cluster_size, default_alignment, default_metadata_log_cluster, default_cluster_range);
+auto default_init_shard() {
+    return init_shard(default_cluster_size, default_alignment, default_metadata_log_cluster, default_cluster_range);
 }
 
 auto default_gen_buffer(size_t len, bool aligned) {
     return gen_buffer(len, aligned, default_alignment);
 }
 
-void write_with_simulate(metadata_log& log, inode_t inode, file_offset_t write_offset, temporary_buffer<uint8_t>& buff,
+void write_with_simulate(backend::shard& shard, inode_t inode, file_offset_t write_offset, temporary_buffer<uint8_t>& buff,
         resizable_buff_type& real_file_data) {
     if (real_file_data.size() < write_offset + buff.size()) {
         real_file_data.resize(write_offset + buff.size());
     }
     std::memcpy(real_file_data.data() + write_offset, buff.get(), buff.size());
 
-    BOOST_REQUIRE_EQUAL(log.write(inode, write_offset, buff.get(), buff.size()).get0(), buff.size());
+    BOOST_REQUIRE_EQUAL(shard.write(inode, write_offset, buff.get(), buff.size()).get0(), buff.size());
 }
 
-void random_write_with_simulate(metadata_log& log, inode_t inode, file_offset_t write_offset, size_t bytes_num, bool aligned,
+void random_write_with_simulate(backend::shard& shard, inode_t inode, file_offset_t write_offset, size_t bytes_num, bool aligned,
         resizable_buff_type& real_file_data) {
     temporary_buffer<uint8_t> buff = default_gen_buffer(bytes_num, aligned);
-    write_with_simulate(log, inode, write_offset, buff, real_file_data);
+    write_with_simulate(shard, inode, write_offset, buff, real_file_data);
 }
 
-void check_random_reads(metadata_log& log, inode_t inode, resizable_buff_type& real_file_data, size_t reps,
+void check_random_reads(backend::shard& shard, inode_t inode, resizable_buff_type& real_file_data, size_t reps,
         bool must_be_aligned = false) {
     size_t file_size = real_file_data.size();
     std::default_random_engine random_engine(testing::local_random_engine());
@@ -125,7 +125,7 @@ void check_random_reads(metadata_log& log, inode_t inode, resizable_buff_type& r
             }
             size_t max_read_size = b - a;
             temporary_buffer<uint8_t> read_data(max_read_size);
-            BOOST_REQUIRE_EQUAL(log.read(inode, a, read_data.get_write(), max_read_size).get0(), max_read_size);
+            BOOST_REQUIRE_EQUAL(shard.read(inode, a, read_data.get_write(), max_read_size).get0(), max_read_size);
             BOOST_REQUIRE(std::memcmp(real_file_data.c_str() + a, read_data.get(), max_read_size) == 0);
         }
     }
@@ -140,7 +140,7 @@ void check_random_reads(metadata_log& log, inode_t inode, resizable_buff_type& r
             }
             size_t max_read_size = b - a;
             temporary_buffer<uint8_t> read_data(max_read_size);
-            BOOST_REQUIRE_EQUAL(log.read(inode, a, read_data.get_write(), max_read_size).get0(), 0);
+            BOOST_REQUIRE_EQUAL(shard.read(inode, a, read_data.get_write(), max_read_size).get0(), 0);
         }
     }
 
@@ -152,7 +152,7 @@ void check_random_reads(metadata_log& log, inode_t inode, resizable_buff_type& r
             size_t max_read_size = b - a;
             size_t expected_read_size = file_size - a;
             temporary_buffer<uint8_t> read_data(max_read_size);
-            BOOST_REQUIRE_EQUAL(log.read(inode, a, read_data.get_write(), max_read_size).get0(), expected_read_size);
+            BOOST_REQUIRE_EQUAL(shard.read(inode, a, read_data.get_write(), max_read_size).get0(), expected_read_size);
             BOOST_REQUIRE(std::memcmp(real_file_data.c_str() + a, read_data.get(), expected_read_size) == 0);
         }
     }
@@ -171,13 +171,13 @@ SEASTAR_THREAD_TEST_CASE(small_write_test) {
             SMALL_WRITE_THRESHOLD}) {
         assert(get_write_type(write_len) == write_type::SMALL);
 
-        auto [blockdev, log] = default_init_metadata_log();
-        inode_t inode = create_and_open_file(log);
+        auto [blockdev, shard] = default_init_shard();
+        inode_t inode = create_and_open_file(shard);
         resizable_buff_type real_file_data;
 
         BOOST_TEST_MESSAGE("write_len: " << write_len);
         temporary_buffer<uint8_t> buff = default_gen_buffer(write_len, false);
-        CHECK_CALL(write_with_simulate(log, inode, write_offset, buff, real_file_data));
+        CHECK_CALL(write_with_simulate(shard, inode, write_offset, buff, real_file_data));
 
         auto meta_buff = get_current_metadata_buffer();
         BOOST_TEST_MESSAGE("meta_buff->actions: " << meta_buff->actions);
@@ -195,7 +195,7 @@ SEASTAR_THREAD_TEST_CASE(small_write_test) {
         };
         CHECK_CALL(check_metadata_entries_equal(meta_buff->actions[1], expected_entry));
 
-        CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb));
+        CHECK_CALL(check_random_reads(shard, inode, real_file_data, random_read_checks_nb));
 
         BOOST_TEST_MESSAGE("");
     }
@@ -212,13 +212,13 @@ SEASTAR_THREAD_TEST_CASE(medium_write_test) {
         assert(write_len % default_alignment == 0);
         assert(get_write_type(write_len) == write_type::MEDIUM);
 
-        auto [blockdev, log] = default_init_metadata_log();
-        inode_t inode = create_and_open_file(log);
+        auto [blockdev, shard] = default_init_shard();
+        inode_t inode = create_and_open_file(shard);
         resizable_buff_type real_file_data;
 
         BOOST_TEST_MESSAGE("write_len: " << write_len);
         temporary_buffer<uint8_t> buff = default_gen_buffer(write_len, true);
-        CHECK_CALL(write_with_simulate(log, inode, write_offset, buff, real_file_data));
+        CHECK_CALL(write_with_simulate(shard, inode, write_offset, buff, real_file_data));
 
         auto meta_buff = get_current_metadata_buffer();
         BOOST_TEST_MESSAGE("meta_buff->actions: " << meta_buff->actions);
@@ -240,7 +240,7 @@ SEASTAR_THREAD_TEST_CASE(medium_write_test) {
         };
         CHECK_CALL(check_metadata_entries_equal(meta_buff->actions[1], expected_entry));
 
-        CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb));
+        CHECK_CALL(check_random_reads(shard, inode, real_file_data, random_read_checks_nb));
 
         BOOST_TEST_MESSAGE("");
     }
@@ -262,18 +262,18 @@ SEASTAR_THREAD_TEST_CASE(second_medium_write_without_new_data_cluster_allocation
         assert(remaining_space_in_cluster >= SMALL_WRITE_THRESHOLD);
         assert(remaining_space_in_cluster >= second_write_len);
 
-        auto [blockdev, log] = default_init_metadata_log();
-        inode_t inode = create_and_open_file(log);
+        auto [blockdev, shard] = default_init_shard();
+        inode_t inode = create_and_open_file(shard);
         resizable_buff_type real_file_data;
 
         // After that write remaining_space_in_cluster bytes should remain in internal cluster_writer
         BOOST_TEST_MESSAGE("first write len: " << first_write_len);
-        CHECK_CALL(random_write_with_simulate(log, inode, 0, first_write_len, true, real_file_data));
+        CHECK_CALL(random_write_with_simulate(shard, inode, 0, first_write_len, true, real_file_data));
 
         BOOST_TEST_MESSAGE("second write len: " << second_write_len);
         size_t nb_of_cluster_writers_before = mock_cluster_writer::virtually_constructed_writers.size();
         temporary_buffer<uint8_t> buff = default_gen_buffer(second_write_len, true);
-        CHECK_CALL(write_with_simulate(log, inode, write_offset, buff, real_file_data));
+        CHECK_CALL(write_with_simulate(shard, inode, write_offset, buff, real_file_data));
         size_t nb_of_cluster_writers_after = mock_cluster_writer::virtually_constructed_writers.size();
 
         auto meta_buff = get_current_metadata_buffer();
@@ -298,7 +298,7 @@ SEASTAR_THREAD_TEST_CASE(second_medium_write_without_new_data_cluster_allocation
         };
         CHECK_CALL(check_metadata_entries_equal(meta_buff->actions[2], expected_entry));
 
-        CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb));
+        CHECK_CALL(check_random_reads(shard, inode, real_file_data, random_read_checks_nb));
 
         BOOST_TEST_MESSAGE("");
     }
@@ -318,18 +318,18 @@ SEASTAR_THREAD_TEST_CASE(second_medium_write_with_new_data_cluster_allocation_te
         medium_write_len_t remaining_space_in_cluster = default_cluster_size - first_write_len;
         assert(remaining_space_in_cluster <= SMALL_WRITE_THRESHOLD);
 
-        auto [blockdev, log] = default_init_metadata_log();
-        inode_t inode = create_and_open_file(log);
+        auto [blockdev, shard] = default_init_shard();
+        inode_t inode = create_and_open_file(shard);
         resizable_buff_type real_file_data;
 
         // After that write remaining_space_in_cluster bytes should remain in internal cluster_writer
         BOOST_TEST_MESSAGE("first write len: " << first_write_len);
-        CHECK_CALL(random_write_with_simulate(log, inode, 0, first_write_len, true, real_file_data));
+        CHECK_CALL(random_write_with_simulate(shard, inode, 0, first_write_len, true, real_file_data));
 
         BOOST_TEST_MESSAGE("second write len: " << second_write_len);
         size_t nb_of_cluster_writers_before = mock_cluster_writer::virtually_constructed_writers.size();
         temporary_buffer<uint8_t> buff = default_gen_buffer(second_write_len, true);
-        CHECK_CALL(write_with_simulate(log, inode, write_offset, buff, real_file_data));
+        CHECK_CALL(write_with_simulate(shard, inode, write_offset, buff, real_file_data));
         size_t nb_of_cluster_writers_after = mock_cluster_writer::virtually_constructed_writers.size();
 
         auto meta_buff = get_current_metadata_buffer();
@@ -353,7 +353,7 @@ SEASTAR_THREAD_TEST_CASE(second_medium_write_with_new_data_cluster_allocation_te
         };
         CHECK_CALL(check_metadata_entries_equal(meta_buff->actions[2], expected_entry));
 
-        CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb));
+        CHECK_CALL(check_random_reads(shard, inode, real_file_data, random_read_checks_nb));
 
         BOOST_TEST_MESSAGE("");
     }
@@ -380,18 +380,18 @@ SEASTAR_THREAD_TEST_CASE(split_medium_write_with_small_write_test) {
         assert(remaining_space_in_cluster < second_write_len);
         assert(get_write_type(second_write_len - remaining_space_in_cluster) == write_type::SMALL);
 
-        auto [blockdev, log] = default_init_metadata_log();
-        inode_t inode = create_and_open_file(log);
+        auto [blockdev, shard] = default_init_shard();
+        inode_t inode = create_and_open_file(shard);
         resizable_buff_type real_file_data;
 
         // After that write remaining_space_in_cluster bytes should remain in internal cluster_writer
         BOOST_TEST_MESSAGE("first write len: " << first_write_len);
-        CHECK_CALL(random_write_with_simulate(log, inode, 0, first_write_len, true, real_file_data));
+        CHECK_CALL(random_write_with_simulate(shard, inode, 0, first_write_len, true, real_file_data));
 
         BOOST_TEST_MESSAGE("second write len: " << second_write_len);
         size_t nb_of_cluster_writers_before = mock_cluster_writer::virtually_constructed_writers.size();
         temporary_buffer<uint8_t> buff = default_gen_buffer(second_write_len, true);
-        CHECK_CALL(write_with_simulate(log, inode, write_offset, buff, real_file_data));
+        CHECK_CALL(write_with_simulate(shard, inode, write_offset, buff, real_file_data));
         size_t nb_of_cluster_writers_after = mock_cluster_writer::virtually_constructed_writers.size();
 
         auto meta_buff = get_current_metadata_buffer();
@@ -425,7 +425,7 @@ SEASTAR_THREAD_TEST_CASE(split_medium_write_with_small_write_test) {
         };
         CHECK_CALL(check_metadata_entries_equal(meta_buff->actions[3], expected_entry2));
 
-        CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb));
+        CHECK_CALL(check_random_reads(shard, inode, real_file_data, random_read_checks_nb));
 
         BOOST_TEST_MESSAGE("");
     }
@@ -452,18 +452,18 @@ SEASTAR_THREAD_TEST_CASE(split_medium_write_with_medium_write_test) {
         assert(remaining_space_in_cluster < second_write_len);
         assert(get_write_type(second_write_len - remaining_space_in_cluster) == write_type::MEDIUM);
 
-        auto [blockdev, log] = default_init_metadata_log();
-        inode_t inode = create_and_open_file(log);
+        auto [blockdev, shard] = default_init_shard();
+        inode_t inode = create_and_open_file(shard);
         resizable_buff_type real_file_data;
 
         // After that write remaining_space_in_cluster bytes should remain in internal cluster_writer
         BOOST_TEST_MESSAGE("first write len: " << first_write_len);
-        CHECK_CALL(random_write_with_simulate(log, inode, 0, first_write_len, true, real_file_data));
+        CHECK_CALL(random_write_with_simulate(shard, inode, 0, first_write_len, true, real_file_data));
 
         BOOST_TEST_MESSAGE("second write len: " << second_write_len);
         size_t nb_of_cluster_writers_before = mock_cluster_writer::virtually_constructed_writers.size();
         temporary_buffer<uint8_t> buff = default_gen_buffer(second_write_len, true);
-        CHECK_CALL(write_with_simulate(log, inode, write_offset, buff, real_file_data));
+        CHECK_CALL(write_with_simulate(shard, inode, write_offset, buff, real_file_data));
         size_t nb_of_cluster_writers_after = mock_cluster_writer::virtually_constructed_writers.size();
 
         auto meta_buff = get_current_metadata_buffer();
@@ -501,7 +501,7 @@ SEASTAR_THREAD_TEST_CASE(split_medium_write_with_medium_write_test) {
         };
         CHECK_CALL(check_metadata_entries_equal(meta_buff->actions[3], expected_entry2));
 
-        CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb));
+        CHECK_CALL(check_random_reads(shard, inode, real_file_data, random_read_checks_nb));
 
         BOOST_TEST_MESSAGE("");
     }
@@ -514,13 +514,13 @@ SEASTAR_THREAD_TEST_CASE(large_write_test) {
     constexpr uint64_t write_len = default_cluster_size * 2;
     // TODO: asserts
 
-    auto [blockdev, log] = default_init_metadata_log();
-    inode_t inode = create_and_open_file(log);
+    auto [blockdev, shard] = default_init_shard();
+    inode_t inode = create_and_open_file(shard);
     resizable_buff_type real_file_data;
 
     BOOST_TEST_MESSAGE("write_len: " << write_len);
     temporary_buffer<uint8_t> buff = default_gen_buffer(write_len, true);
-    CHECK_CALL(write_with_simulate(log, inode, write_offset, buff, real_file_data));
+    CHECK_CALL(write_with_simulate(shard, inode, write_offset, buff, real_file_data));
 
     auto meta_buff = get_current_metadata_buffer();
     BOOST_TEST_MESSAGE("meta_buff->actions: " << meta_buff->actions);
@@ -551,7 +551,7 @@ SEASTAR_THREAD_TEST_CASE(large_write_test) {
     };
     CHECK_CALL(check_metadata_entries_equal(meta_buff->actions[2], expected_entry2));
 
-    CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb));
+    CHECK_CALL(check_random_reads(shard, inode, real_file_data, random_read_checks_nb));
 
     BOOST_TEST_MESSAGE("");
 }
@@ -565,13 +565,13 @@ SEASTAR_THREAD_TEST_CASE(unaligned_write_split_into_two_small_writes_test) {
     constexpr medium_write_len_t write_len = SMALL_WRITE_THRESHOLD + 1;
     // TODO: asserts
 
-    auto [blockdev, log] = default_init_metadata_log();
-    inode_t inode = create_and_open_file(log);
+    auto [blockdev, shard] = default_init_shard();
+    inode_t inode = create_and_open_file(shard);
     resizable_buff_type real_file_data;
 
     BOOST_TEST_MESSAGE("write_len: " << write_len);
     temporary_buffer<uint8_t> buff = default_gen_buffer(write_len, false);
-    CHECK_CALL(write_with_simulate(log, inode, write_offset, buff, real_file_data));
+    CHECK_CALL(write_with_simulate(shard, inode, write_offset, buff, real_file_data));
 
     auto meta_buff = get_current_metadata_buffer();
     BOOST_TEST_MESSAGE("meta_buff->actions: " << meta_buff->actions);
@@ -603,7 +603,7 @@ SEASTAR_THREAD_TEST_CASE(unaligned_write_split_into_two_small_writes_test) {
     };
     CHECK_CALL(check_metadata_entries_equal(meta_buff->actions[2], expected_entry2));
 
-    CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb));
+    CHECK_CALL(check_random_reads(shard, inode, real_file_data, random_read_checks_nb));
 
     BOOST_TEST_MESSAGE("");
 }
@@ -617,13 +617,13 @@ SEASTAR_THREAD_TEST_CASE(unaligned_write_split_into_small_medium_and_small_write
             default_cluster_size}) {
         // TODO: asserts
 
-        auto [blockdev, log] = default_init_metadata_log();
-        inode_t inode = create_and_open_file(log);
+        auto [blockdev, shard] = default_init_shard();
+        inode_t inode = create_and_open_file(shard);
         resizable_buff_type real_file_data;
 
         BOOST_TEST_MESSAGE("write_len: " << write_len);
         temporary_buffer<uint8_t> buff = default_gen_buffer(write_len, false);
-        CHECK_CALL(write_with_simulate(log, inode, write_offset, buff, real_file_data));
+        CHECK_CALL(write_with_simulate(shard, inode, write_offset, buff, real_file_data));
 
         auto meta_buff = get_current_metadata_buffer();
         BOOST_TEST_MESSAGE("meta_buff->actions: " << meta_buff->actions);
@@ -670,7 +670,7 @@ SEASTAR_THREAD_TEST_CASE(unaligned_write_split_into_small_medium_and_small_write
         };
         CHECK_CALL(check_metadata_entries_equal(meta_buff->actions[3], expected_entry3));
 
-        CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb));
+        CHECK_CALL(check_random_reads(shard, inode, real_file_data, random_read_checks_nb));
 
         BOOST_TEST_MESSAGE("");
     }
@@ -683,13 +683,13 @@ SEASTAR_THREAD_TEST_CASE(unaligned_write_split_into_small_large_and_small_writes
     constexpr uint64_t write_len = default_cluster_size + default_alignment;
     // TODO: asserts
 
-    auto [blockdev, log] = default_init_metadata_log();
-    inode_t inode = create_and_open_file(log);
+    auto [blockdev, shard] = default_init_shard();
+    inode_t inode = create_and_open_file(shard);
     resizable_buff_type real_file_data;
 
     BOOST_TEST_MESSAGE("write_len: " << write_len);
     temporary_buffer<uint8_t> buff = default_gen_buffer(write_len, false);
-    CHECK_CALL(write_with_simulate(log, inode, write_offset, buff, real_file_data));
+    CHECK_CALL(write_with_simulate(shard, inode, write_offset, buff, real_file_data));
 
     auto meta_buff = get_current_metadata_buffer();
     BOOST_TEST_MESSAGE("meta_buff->actions: " << meta_buff->actions);
@@ -734,7 +734,7 @@ SEASTAR_THREAD_TEST_CASE(unaligned_write_split_into_small_large_and_small_writes
     };
     CHECK_CALL(check_metadata_entries_equal(meta_buff->actions[3], expected_entry3));
 
-    CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb));
+    CHECK_CALL(check_random_reads(shard, inode, real_file_data, random_read_checks_nb));
 
     BOOST_TEST_MESSAGE("");
 }
@@ -744,13 +744,13 @@ SEASTAR_THREAD_TEST_CASE(big_single_write_splitting_test) {
     constexpr file_offset_t write_offset = 7331;
     constexpr uint64_t write_len = default_cluster_size * 3 + min_medium_write_len + default_alignment + 10;
 
-    auto [blockdev, log] = default_init_metadata_log();
-    inode_t inode = create_and_open_file(log);
+    auto [blockdev, shard] = default_init_shard();
+    inode_t inode = create_and_open_file(shard);
     resizable_buff_type real_file_data;
 
     BOOST_TEST_MESSAGE("write_len: " << write_len);
     temporary_buffer<uint8_t> buff = default_gen_buffer(write_len, true);
-    CHECK_CALL(write_with_simulate(log, inode, write_offset, buff, real_file_data));
+    CHECK_CALL(write_with_simulate(shard, inode, write_offset, buff, real_file_data));
 
     auto meta_buff = get_current_metadata_buffer();
     BOOST_TEST_MESSAGE("meta_buff->actions: " << meta_buff->actions);
@@ -763,7 +763,7 @@ SEASTAR_THREAD_TEST_CASE(big_single_write_splitting_test) {
     BOOST_REQUIRE(is_append_type<ondisk_medium_write>(meta_actions[4]));
     BOOST_REQUIRE(is_append_type<ondisk_small_write>(meta_actions[5]));
 
-    CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb));
+    CHECK_CALL(check_random_reads(shard, inode, real_file_data, random_read_checks_nb));
 
     BOOST_TEST_MESSAGE("");
 }
@@ -780,8 +780,8 @@ SEASTAR_THREAD_TEST_CASE(random_writes_and_reads_test) {
             << ", writes_nb: " << writes_nb
             << ", random_read_checks_nb_every_write: " << random_read_checks_nb_every_write);
 
-    auto [blockdev, log] = init_metadata_log(cluster_size, default_alignment, 1, {1, available_cluster_nb + 1});
-    inode_t inode = create_and_open_file(log);
+    auto [blockdev, shard] = init_shard(cluster_size, default_alignment, 1, {1, available_cluster_nb + 1});
+    inode_t inode = create_and_open_file(shard);
     resizable_buff_type real_file_data;
 
     std::uniform_int_distribution<file_offset_t> offset_distr(0, max_file_size - 1);
@@ -799,8 +799,8 @@ SEASTAR_THREAD_TEST_CASE(random_writes_and_reads_test) {
         size_t write_size = b - a + 1;
         bool aligned = align_distr(random_engine);
 
-        CHECK_CALL(random_write_with_simulate(log, inode, a, write_size, aligned, real_file_data));
-        CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb_every_write));
+        CHECK_CALL(random_write_with_simulate(shard, inode, a, write_size, aligned, real_file_data));
+        CHECK_CALL(check_random_reads(shard, inode, real_file_data, random_read_checks_nb_every_write));
     }
 }
 
@@ -817,8 +817,8 @@ SEASTAR_THREAD_TEST_CASE(aligned_writes_and_reads_test) {
             << ", writes_nb: " << writes_nb
             << ", random_read_checks_nb_every_write: " << random_read_checks_nb_every_write);
 
-    auto [blockdev, log] = init_metadata_log(cluster_size, default_alignment, 1, {1, available_cluster_nb + 1});
-    inode_t inode = create_and_open_file(log);
+    auto [blockdev, shard] = init_shard(cluster_size, default_alignment, 1, {1, available_cluster_nb + 1});
+    inode_t inode = create_and_open_file(shard);
     resizable_buff_type real_file_data;
 
     std::uniform_int_distribution<file_offset_t> offset_distr(0, max_file_size / default_alignment);
@@ -836,7 +836,7 @@ SEASTAR_THREAD_TEST_CASE(aligned_writes_and_reads_test) {
             }
         } while (a == b);
         size_t write_size = b - a;
-        CHECK_CALL(random_write_with_simulate(log, inode, a, write_size, true, real_file_data));
-        CHECK_CALL(check_random_reads(log, inode, real_file_data, random_read_checks_nb_every_write, true));
+        CHECK_CALL(random_write_with_simulate(shard, inode, a, write_size, true, real_file_data));
+        CHECK_CALL(check_random_reads(shard, inode, real_file_data, random_read_checks_nb_every_write, true));
     }
 }

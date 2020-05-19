@@ -21,15 +21,15 @@
 
 #pragma once
 
+#include "fs/backend/shard.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
-#include "fs/metadata_log.hh"
 #include "fs/path.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
 
-namespace seastar::fs {
+namespace seastar::fs::backend {
 
 enum class remove_semantics {
     FILE_ONLY,
@@ -38,7 +38,7 @@ enum class remove_semantics {
 };
 
 class unlink_or_remove_file_operation {
-    metadata_log& _metadata_log;
+    shard& _shard;
     remove_semantics _remove_semantics;
     std::string _entry_name;
     inode_t _dir_inode;
@@ -46,7 +46,7 @@ class unlink_or_remove_file_operation {
     inode_t _entry_inode;
     inode_info* _entry_inode_info;
 
-    unlink_or_remove_file_operation(metadata_log& metadata_log) : _metadata_log(metadata_log) {}
+    unlink_or_remove_file_operation(shard& shard) : _shard(shard) {}
 
     future<> unlink_or_remove(std::string path, remove_semantics remove_semantics) {
         _remove_semantics = remove_semantics;
@@ -60,11 +60,11 @@ class unlink_or_remove_file_operation {
         }
         assert(path.empty() or path.back() == '/'); // Hence fast-check for "is directory" is done in path_lookup
 
-        return _metadata_log.path_lookup(path).then([this](inode_t dir_inode) {
+        return _shard.path_lookup(path).then([this](inode_t dir_inode) {
             _dir_inode = dir_inode;
             // Fail-fast checks before locking (as locking may be expensive)
-            auto dir_it = _metadata_log._inodes.find(dir_inode);
-            if (dir_it == _metadata_log._inodes.end()) {
+            auto dir_it = _shard._inodes.find(dir_inode);
+            if (dir_it == _shard._inodes.end()) {
                 return make_exception_future(operation_became_invalid_exception());
             }
             assert(dir_it->second.is_directory() and "Directory cannot become file or there is a BUG in path_lookup");
@@ -76,7 +76,7 @@ class unlink_or_remove_file_operation {
             }
             _entry_inode = entry_it->second;
 
-            _entry_inode_info = &_metadata_log._inodes.at(_entry_inode);
+            _entry_inode_info = &_shard._inodes.at(_entry_inode);
             if (_entry_inode_info->is_directory()) {
                 switch (_remove_semantics) {
                 case remove_semantics::FILE_ONLY:
@@ -103,11 +103,11 @@ class unlink_or_remove_file_operation {
             // Getting a lock on directory entry is enough to ensure it won't disappear because deleting directory
             // requires it to be empty
             if (_entry_inode_info->is_directory()) {
-                return _metadata_log._locks.with_locks(metadata_log::locks::unique {dir_inode, _entry_name}, metadata_log::locks::unique {_entry_inode}, [this] {
+                return _shard._locks.with_locks(shard::locks::unique {dir_inode, _entry_name}, shard::locks::unique {_entry_inode}, [this] {
                     return unlink_or_remove_file_in_directory();
                 });
             } else {
-                return _metadata_log._locks.with_locks(metadata_log::locks::unique {dir_inode, _entry_name}, metadata_log::locks::shared {_entry_inode}, [this] {
+                return _shard._locks.with_locks(shard::locks::unique {dir_inode, _entry_name}, shard::locks::shared {_entry_inode}, [this] {
                     return unlink_or_remove_file_in_directory();
                 });
             }
@@ -115,7 +115,7 @@ class unlink_or_remove_file_operation {
     }
 
     future<> unlink_or_remove_file_in_directory() {
-        if (not _metadata_log.inode_exists(_dir_inode)) {
+        if (not _shard.inode_exists(_dir_inode)) {
             return make_exception_future(operation_became_invalid_exception());
         }
 
@@ -143,14 +143,14 @@ class unlink_or_remove_file_operation {
                 static_cast<entry_name_length_t>(_entry_name.size())
             };
 
-            switch (_metadata_log.append_ondisk_entry(ondisk_entry, _entry_name.data())) {
-            case metadata_log::append_result::TOO_BIG:
+            switch (_shard.append_ondisk_entry(ondisk_entry, _entry_name.data())) {
+            case shard::append_result::TOO_BIG:
                 return make_exception_future(cluster_size_too_small_to_perform_operation_exception());
-            case metadata_log::append_result::NO_SPACE:
+            case shard::append_result::NO_SPACE:
                 return make_exception_future(no_more_space_exception());
-            case metadata_log::append_result::APPENDED:
-                _metadata_log.memory_only_delete_dir_entry(*_dir_info, _entry_name);
-                _metadata_log.memory_only_delete_inode(_entry_inode);
+            case shard::append_result::APPENDED:
+                _shard.memory_only_delete_dir_entry(*_dir_info, _entry_name);
+                _shard.memory_only_delete_inode(_entry_inode);
                 return now();
             }
             __builtin_unreachable();
@@ -167,30 +167,30 @@ class unlink_or_remove_file_operation {
             static_cast<entry_name_length_t>(_entry_name.size())
         };
 
-        switch (_metadata_log.append_ondisk_entry(ondisk_entry, _entry_name.data())) {
-        case metadata_log::append_result::TOO_BIG:
+        switch (_shard.append_ondisk_entry(ondisk_entry, _entry_name.data())) {
+        case shard::append_result::TOO_BIG:
             return make_exception_future(cluster_size_too_small_to_perform_operation_exception());
-        case metadata_log::append_result::NO_SPACE:
+        case shard::append_result::NO_SPACE:
             return make_exception_future(no_more_space_exception());
-        case metadata_log::append_result::APPENDED:
-            _metadata_log.memory_only_delete_dir_entry(*_dir_info, _entry_name);
+        case shard::append_result::APPENDED:
+            _shard.memory_only_delete_dir_entry(*_dir_info, _entry_name);
             break;
         }
 
         if (not _entry_inode_info->is_linked() and not _entry_inode_info->is_open()) {
             // File became unlinked and not open, so we need to delete it
-            _metadata_log.schedule_attempt_to_delete_inode(_entry_inode);
+            _shard.schedule_attempt_to_delete_inode(_entry_inode);
         }
 
         return now();
     }
 
 public:
-    static future<> perform(metadata_log& metadata_log, std::string path, remove_semantics remove_semantics) {
-        return do_with(unlink_or_remove_file_operation(metadata_log), [path = std::move(path), remove_semantics](auto& obj) {
+    static future<> perform(shard& shard, std::string path, remove_semantics remove_semantics) {
+        return do_with(unlink_or_remove_file_operation(shard), [path = std::move(path), remove_semantics](auto& obj) {
             return obj.unlink_or_remove(std::move(path), remove_semantics);
         });
     }
 };
 
-} // namespace seastar::fs
+} // namespace seastar::fs::backend

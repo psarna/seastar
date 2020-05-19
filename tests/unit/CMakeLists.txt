@@ -373,9 +373,9 @@ if (Seastar_EXPERIMENTAL_FS)
   seastar_add_test (fs_cluster_allocator
     KIND BOOST
     SOURCES fs_cluster_allocator_test.cc)
-  seastar_add_test (fs_log_bootstrap
+  seastar_add_test (fs_backend_shard_bootstrap
     SOURCES
-      fs_log_bootstrap_test.cc
+      fs_backend_shard_bootstrap_test.cc
       fs_mock_block_device.cc)
   seastar_add_test (fs_metadata_to_disk_buffer
     SOURCES

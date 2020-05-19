@@ -19,9 +19,9 @@
  * Copyright (C) 2020 ScyllaDB
  */
 
+#include "fs/backend/shard.hh"
 #include "fs/bootstrap_record.hh"
 #include "fs/inode.hh"
-#include "fs/metadata_log.hh"
 #include "fs/units.hh"
 #include "fs_mock_block_device.hh"
 
@@ -37,10 +37,10 @@ constexpr unit_size_t cluster_size = 1 * MB;
 constexpr unit_size_t alignment = 4 * KB;
 constexpr inode_t root_directory = 0;
 
-future<std::set<std::string>> get_entries_from_directory(metadata_log& log, std::string dir_path) {
-    return async([&log, dir_path = std::move(dir_path)] {
+future<std::set<std::string>> get_entries_from_directory(backend::shard& shard, std::string dir_path) {
+    return async([&shard, dir_path = std::move(dir_path)] {
         std::set<std::string> entries;
-        log.iterate_directory(dir_path, [&entries] (const std::string& entry) -> future<stop_iteration> {
+        shard.iterate_directory(dir_path, [&entries] (const std::string& entry) -> future<stop_iteration> {
             entries.insert(entry);
             return make_ready_future<stop_iteration>(stop_iteration::no);
         }).wait();
@@ -58,29 +58,29 @@ SEASTAR_THREAD_TEST_CASE(create_dirs_and_bootstrap_test) {
 
     {
         block_device device(dev_impl);
-        auto log = metadata_log(std::move(device), cluster_size, alignment);
-        const auto close_log = defer([&log]() mutable { log.shutdown().wait(); });
-        log.bootstrap(root_directory, shard_info.metadata_cluster, shard_info.available_clusters, 1, 0).wait();
+        auto shard = backend::shard(std::move(device), cluster_size, alignment);
+        const auto close_log = defer([&shard]() mutable { shard.shutdown().wait(); });
+        shard.bootstrap(root_directory, shard_info.metadata_cluster, shard_info.available_clusters, 1, 0).wait();
 
         int flush_after = 1;
         for (auto directory: control_directories) {
-            log.create_directory("/" + std::move(directory), file_permissions::default_file_permissions).wait();
+            shard.create_directory("/" + std::move(directory), file_permissions::default_file_permissions).wait();
             if (--flush_after == 0) {
-                log.flush_log().wait();
+                shard.flush_log().wait();
             }
         }
 
-        const auto entries = get_entries_from_directory(log, "/").get0();
+        const auto entries = get_entries_from_directory(shard, "/").get0();
         BOOST_REQUIRE_EQUAL(entries, control_directories);
     }
 
     {
         block_device device(dev_impl);
-        auto log = metadata_log(std::move(device), cluster_size, alignment);
-        const auto close_log = defer([&log]() mutable { log.shutdown().wait(); });
-        log.bootstrap(root_directory, shard_info.metadata_cluster, shard_info.available_clusters, 1, 0).wait();
+        auto shard = backend::shard(std::move(device), cluster_size, alignment);
+        const auto close_log = defer([&shard]() mutable { shard.shutdown().wait(); });
+        shard.bootstrap(root_directory, shard_info.metadata_cluster, shard_info.available_clusters, 1, 0).wait();
 
-        const auto entries = get_entries_from_directory(log, "/").get0();
+        const auto entries = get_entries_from_directory(shard, "/").get0();
         BOOST_REQUIRE_EQUAL(entries, control_directories);
     }
 }

@@ -21,11 +21,11 @@
 
 #pragma once
 
+#include "fs/backend/shard.hh"
 #include "fs/cluster.hh"
 #include "fs/device_reader.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
-#include "fs/metadata_log.hh"
 #include "fs/units.hh"
 #include "seastar/core/do_with.hh"
 #include "seastar/core/file.hh"
@@ -40,23 +40,23 @@
 #include <variant>
 #include <vector>
 
-namespace seastar::fs {
+namespace seastar::fs::backend {
 
 class read_operation {
-    metadata_log& _metadata_log;
+    shard& _shard;
     inode_t _inode;
     const io_priority_class& _pc;
     device_reader _disk_reader;
 
-    read_operation(metadata_log& metadata_log, inode_t inode, const io_priority_class& pc)
-        : _metadata_log(metadata_log)
+    read_operation(shard& shard, inode_t inode, const io_priority_class& pc)
+        : _shard(shard)
         , _inode(inode)
         , _pc(pc)
-        , _disk_reader(_metadata_log._device, _metadata_log._alignment, _pc) {}
+        , _disk_reader(_shard._device, _shard._alignment, _pc) {}
 
     future<size_t> read(uint8_t* buffer, file_offset_t file_offset, size_t read_len) {
-        auto inode_it = _metadata_log._inodes.find(_inode);
-        if (inode_it == _metadata_log._inodes.end()) {
+        auto inode_it = _shard._inodes.find(_inode);
+        if (inode_it == _shard._inodes.end()) {
             return make_exception_future<size_t>(invalid_inode_exception());
         }
         if (inode_it->second.is_directory()) {
@@ -64,10 +64,10 @@ class read_operation {
         }
         inode_info::file* file_info = &inode_it->second.get_file();
 
-        return _metadata_log._locks.with_lock(metadata_log::locks::shared {_inode},
+        return _shard._locks.with_lock(shard::locks::shared {_inode},
                 [this, file_info, buffer, read_len, file_offset] {
             // TODO: do we want to keep that lock during reading? Everything should work even after file removal
-            if (not _metadata_log.inode_exists(_inode)) {
+            if (not _shard.inode_exists(_inode)) {
                 return make_exception_future<size_t>(operation_became_invalid_exception());
             }
 
@@ -127,12 +127,12 @@ class read_operation {
     }
 
 public:
-    static future<size_t> perform(metadata_log& metadata_log, inode_t inode, file_offset_t pos, void* buffer,
+    static future<size_t> perform(shard& shard, inode_t inode, file_offset_t pos, void* buffer,
             size_t len, const io_priority_class& pc) {
-        return do_with(read_operation(metadata_log, inode, pc), [pos, buffer, len](auto& obj) {
+        return do_with(read_operation(shard, inode, pc), [pos, buffer, len](auto& obj) {
             return obj.read(static_cast<uint8_t*>(buffer), pos, len);
         });
     }
 };
 
-} // namespace seastar::fs
+} // namespace seastar::fs::backend

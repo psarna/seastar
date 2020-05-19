@@ -21,20 +21,20 @@
 
 #pragma once
 
+#include "fs/backend/shard.hh"
 #include "fs/metadata_disk_entries.hh"
-#include "fs/metadata_log.hh"
 #include "fs/path.hh"
 
-namespace seastar::fs {
+namespace seastar::fs::backend {
 
 class link_file_operation {
-    metadata_log& _metadata_log;
+    shard& _shard;
     inode_t _src_inode;
     std::string _entry_name;
     inode_t _dir_inode;
     inode_info::directory* _dir_info;
 
-    link_file_operation(metadata_log& metadata_log) : _metadata_log(metadata_log) {}
+    link_file_operation(shard& shard) : _shard(shard) {}
 
     future<> link_file(inode_t inode, std::string path) {
         _src_inode = inode;
@@ -44,11 +44,11 @@ class link_file_operation {
         }
         assert(path.empty() or path.back() == '/'); // Hence fast-checking for "is directory" is done in path_lookup
 
-        return _metadata_log.path_lookup(path).then([this](inode_t dir_inode) {
+        return _shard.path_lookup(path).then([this](inode_t dir_inode) {
             _dir_inode = dir_inode;
             // Fail-fast checks before locking (as locking may be expensive)
-            auto dir_it = _metadata_log._inodes.find(_dir_inode);
-            if (dir_it == _metadata_log._inodes.end()) {
+            auto dir_it = _shard._inodes.find(_dir_inode);
+            if (dir_it == _shard._inodes.end()) {
                 return make_exception_future(operation_became_invalid_exception());
             }
             assert(dir_it->second.is_directory() and "Directory cannot become file or there is a BUG in path_lookup");
@@ -58,15 +58,15 @@ class link_file_operation {
                 return make_exception_future(file_already_exists_exception());
             }
 
-            return _metadata_log._locks.with_locks(metadata_log::locks::shared {dir_inode},
-                    metadata_log::locks::unique {dir_inode, _entry_name}, [this] {
+            return _shard._locks.with_locks(shard::locks::shared {dir_inode},
+                    shard::locks::unique {dir_inode, _entry_name}, [this] {
                 return link_file_in_directory();
             });
         });
     }
 
     future<> link_file_in_directory() {
-        if (not _metadata_log.inode_exists(_dir_inode)) {
+        if (not _shard.inode_exists(_dir_inode)) {
             return make_exception_future(operation_became_invalid_exception());
         }
 
@@ -89,24 +89,24 @@ class link_file_operation {
             entry_name_length,
         };
 
-        switch (_metadata_log.append_ondisk_entry(ondisk_entry, _entry_name.data())) {
-        case metadata_log::append_result::TOO_BIG:
+        switch (_shard.append_ondisk_entry(ondisk_entry, _entry_name.data())) {
+        case shard::append_result::TOO_BIG:
             return make_exception_future(cluster_size_too_small_to_perform_operation_exception());
-        case metadata_log::append_result::NO_SPACE:
+        case shard::append_result::NO_SPACE:
             return make_exception_future(no_more_space_exception());
-        case metadata_log::append_result::APPENDED:
-            _metadata_log.memory_only_add_dir_entry(*_dir_info, _src_inode, std::move(_entry_name));
+        case shard::append_result::APPENDED:
+            _shard.memory_only_add_dir_entry(*_dir_info, _src_inode, std::move(_entry_name));
             return now();
         }
         __builtin_unreachable();
     }
 
 public:
-    static future<> perform(metadata_log& metadata_log, inode_t inode, std::string path) {
-        return do_with(link_file_operation(metadata_log), [inode, path = std::move(path)](auto& obj) {
+    static future<> perform(shard& shard, inode_t inode, std::string path) {
+        return do_with(link_file_operation(shard), [inode, path = std::move(path)](auto& obj) {
             return obj.link_file(inode, std::move(path));
         });
     }
 };
 
-} // namespace seastar::fs
+} // namespace seastar::fs::backend

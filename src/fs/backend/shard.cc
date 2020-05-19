@@ -19,20 +19,20 @@
  * Copyright (C) 2020 ScyllaDB
  */
 
+#include "fs/backend/bootstrapping.hh"
+#include "fs/backend/create_and_open_unlinked_file.hh"
+#include "fs/backend/create_file.hh"
+#include "fs/backend/link_file.hh"
+#include "fs/backend/read.hh"
+#include "fs/backend/shard.hh"
+#include "fs/backend/truncate.hh"
+#include "fs/backend/unlink_or_remove_file.hh"
+#include "fs/backend/write.hh"
 #include "fs/cluster.hh"
 #include "fs/cluster_allocator.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
-#include "fs/metadata_log.hh"
-#include "fs/metadata_log_bootstrap.hh"
-#include "fs/metadata_log_operations/create_and_open_unlinked_file.hh"
-#include "fs/metadata_log_operations/create_file.hh"
-#include "fs/metadata_log_operations/link_file.hh"
-#include "fs/metadata_log_operations/read.hh"
-#include "fs/metadata_log_operations/truncate.hh"
-#include "fs/metadata_log_operations/unlink_or_remove_file.hh"
-#include "fs/metadata_log_operations/write.hh"
 #include "fs/metadata_to_disk_buffer.hh"
 #include "fs/path.hh"
 #include "fs/units.hh"
@@ -59,38 +59,38 @@
 #include <unordered_set>
 #include <variant>
 
-namespace seastar::fs {
+namespace seastar::fs::backend {
 
-metadata_log::metadata_log(block_device device, uint32_t cluster_size, uint32_t alignment,
-    shared_ptr<metadata_to_disk_buffer> cluster_buff, shared_ptr<cluster_writer> data_writer)
+shard::shard(block_device device, uint32_t cluster_size, uint32_t alignment,
+    shared_ptr<metadata_to_disk_buffer> metadata_log_cbuf, shared_ptr<cluster_writer> medium_data_log_cw)
 : _device(std::move(device))
 , _cluster_size(cluster_size)
 , _alignment(alignment)
-, _curr_cluster_buff(std::move(cluster_buff))
-, _curr_data_writer(std::move(data_writer))
+, _metadata_log_cbuf(std::move(metadata_log_cbuf))
+, _medium_data_log_cw(std::move(medium_data_log_cw))
 , _cluster_allocator({}, {})
 , _inode_allocator(1, 0) {
     assert(is_power_of_2(alignment));
     assert(cluster_size > 0 and cluster_size % alignment == 0);
 }
 
-metadata_log::metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment)
-: metadata_log(std::move(device), cluster_size, alignment,
+shard::shard(block_device device, unit_size_t cluster_size, unit_size_t alignment)
+: shard(std::move(device), cluster_size, alignment,
         make_shared<metadata_to_disk_buffer>(), make_shared<cluster_writer>()) {}
 
-future<> metadata_log::bootstrap(inode_t root_dir, cluster_id_t first_metadata_cluster_id, cluster_range available_clusters,
+future<> shard::bootstrap(inode_t root_dir, cluster_id_t first_metadata_cluster_id, cluster_range available_clusters,
         fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id) {
-    return metadata_log_bootstrap::bootstrap(*this, root_dir, first_metadata_cluster_id, available_clusters,
-            fs_shards_pool_size, fs_shard_id);
+    return bootstrapping::bootstrap(*this, root_dir, first_metadata_cluster_id, available_clusters, fs_shards_pool_size,
+            fs_shard_id);
 }
 
-future<> metadata_log::shutdown() {
+future<> shard::shutdown() {
     return flush_log().then([this] {
         return _device.close();
     });
 }
 
-void metadata_log::write_update(inode_info::file& file, inode_data_vec new_data_vec) {
+void shard::write_update(inode_info::file& file, inode_data_vec new_data_vec) {
     // TODO: for compaction: update used inode_data_vec
     auto file_size = file.size();
     if (file_size < new_data_vec.data_range.beg) {
@@ -105,13 +105,13 @@ void metadata_log::write_update(inode_info::file& file, inode_data_vec new_data_
     file.data.emplace(new_data_vec.data_range.beg, std::move(new_data_vec));
 }
 
-void metadata_log::cut_out_data_range(inode_info::file& file, file_range range) {
+void shard::cut_out_data_range(inode_info::file& file, file_range range) {
     file.cut_out_data_range(range, [](inode_data_vec data_vec) {
         (void)data_vec; // TODO: for compaction: update used inode_data_vec
     });
 }
 
-inode_info& metadata_log::memory_only_create_inode(inode_t inode, bool is_directory, unix_metadata metadata) {
+inode_info& shard::memory_only_create_inode(inode_t inode, bool is_directory, unix_metadata metadata) {
     assert(_inodes.count(inode) == 0);
     return _inodes.emplace(inode, inode_info {
         0,
@@ -127,7 +127,7 @@ inode_info& metadata_log::memory_only_create_inode(inode_t inode, bool is_direct
     }).first->second;
 }
 
-void metadata_log::memory_only_delete_inode(inode_t inode) {
+void shard::memory_only_delete_inode(inode_t inode) {
     auto it = _inodes.find(inode);
     assert(it != _inodes.end());
     assert(not it->second.is_open());
@@ -145,7 +145,7 @@ void metadata_log::memory_only_delete_inode(inode_t inode) {
     _inodes.erase(it);
 }
 
-void metadata_log::memory_only_small_write(inode_t inode, file_offset_t file_offset, temporary_buffer<uint8_t> data) {
+void shard::memory_only_small_write(inode_t inode, file_offset_t file_offset, temporary_buffer<uint8_t> data) {
     inode_data_vec data_vec = {
         {file_offset, file_offset + data.size()},
         inode_data_vec::in_mem_data {std::move(data)}
@@ -157,7 +157,7 @@ void metadata_log::memory_only_small_write(inode_t inode, file_offset_t file_off
     write_update(it->second.get_file(), std::move(data_vec));
 }
 
-void metadata_log::memory_only_disk_write(inode_t inode, file_offset_t file_offset, disk_offset_t disk_offset,
+void shard::memory_only_disk_write(inode_t inode, file_offset_t file_offset, disk_offset_t disk_offset,
         size_t write_len) {
     inode_data_vec data_vec = {
         {file_offset, file_offset + write_len},
@@ -170,7 +170,7 @@ void metadata_log::memory_only_disk_write(inode_t inode, file_offset_t file_offs
     write_update(it->second.get_file(), std::move(data_vec));
 }
 
-void metadata_log::memory_only_update_mtime(inode_t inode, decltype(unix_metadata::mtime_ns) mtime_ns) {
+void shard::memory_only_update_mtime(inode_t inode, decltype(unix_metadata::mtime_ns) mtime_ns) {
     auto it = _inodes.find(inode);
     assert(it != _inodes.end());
     it->second.metadata.mtime_ns = mtime_ns;
@@ -180,7 +180,7 @@ void metadata_log::memory_only_update_mtime(inode_t inode, decltype(unix_metadat
     }
 }
 
-void metadata_log::memory_only_truncate(inode_t inode, file_offset_t size) {
+void shard::memory_only_truncate(inode_t inode, file_offset_t size) {
     auto it = _inodes.find(inode);
     assert(it != _inodes.end());
     assert(it->second.is_file());
@@ -201,7 +201,7 @@ void metadata_log::memory_only_truncate(inode_t inode, file_offset_t size) {
     }
 }
 
-void metadata_log::memory_only_add_dir_entry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name) {
+void shard::memory_only_add_dir_entry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name) {
     auto it = _inodes.find(entry_inode);
     assert(it != _inodes.end());
     // Directory may only be linked once (to avoid creating cycles)
@@ -212,7 +212,7 @@ void metadata_log::memory_only_add_dir_entry(inode_info::directory& dir, inode_t
     ++it->second.links_count;
 }
 
-void metadata_log::memory_only_delete_dir_entry(inode_info::directory& dir, std::string entry_name) {
+void shard::memory_only_delete_dir_entry(inode_info::directory& dir, std::string entry_name) {
     auto it = dir.entries.find(entry_name);
     assert(it != dir.entries.end());
 
@@ -224,15 +224,15 @@ void metadata_log::memory_only_delete_dir_entry(inode_info::directory& dir, std:
     dir.entries.erase(it);
 }
 
-void metadata_log::schedule_flush_of_curr_cluster() {
+void shard::schedule_flush_of_curr_cluster() {
     // Make writes concurrent (TODO: maybe serialized within *one* cluster would be faster?)
-    schedule_background_task(do_with(_curr_cluster_buff, &_device, [](auto& crr_clstr_bf, auto& device) {
+    schedule_background_task(do_with(_metadata_log_cbuf, &_device, [](auto& crr_clstr_bf, auto& device) {
         return crr_clstr_bf->flush_to_disk(*device);
     }));
 }
 
-future<> metadata_log::flush_curr_cluster() {
-    if (_curr_cluster_buff->bytes_left_after_flush_if_done_now() == 0) {
+future<> shard::flush_curr_cluster() {
+    if (_metadata_log_cbuf->bytes_left_after_flush_if_done_now() == 0) {
         switch (schedule_flush_of_curr_cluster_and_change_it_to_new_one()) {
         case flush_result::NO_SPACE:
             return make_exception_future(no_more_space_exception());
@@ -246,26 +246,26 @@ future<> metadata_log::flush_curr_cluster() {
     return _background_futures.get_future();
 }
 
-metadata_log::flush_result metadata_log::schedule_flush_of_curr_cluster_and_change_it_to_new_one() {
+shard::flush_result shard::schedule_flush_of_curr_cluster_and_change_it_to_new_one() {
     auto next_cluster = _cluster_allocator.alloc();
     if (not next_cluster) {
-        // Here metadata log dies, we cannot even flush current cluster because from there we won't be able to recover
+        // Here shard dies, we cannot even flush current cluster because from there we won't be able to recover
         // TODO: ^ add protection from it and take it into account during compaction
         return flush_result::NO_SPACE;
     }
 
-    auto append_res = _curr_cluster_buff->append(ondisk_next_metadata_cluster {*next_cluster});
+    auto append_res = _metadata_log_cbuf->append(ondisk_next_metadata_cluster {*next_cluster});
     assert(append_res == metadata_to_disk_buffer::APPENDED);
     schedule_flush_of_curr_cluster();
 
     // Make next cluster the current cluster to allow writing next metadata entries before flushing finishes
-    _curr_cluster_buff = _curr_cluster_buff->virtual_constructor();
-    _curr_cluster_buff->init(_cluster_size, _alignment,
+    _metadata_log_cbuf = _metadata_log_cbuf->virtual_constructor();
+    _metadata_log_cbuf->init(_cluster_size, _alignment,
             cluster_id_to_offset(*next_cluster, _cluster_size));
     return flush_result::DONE;
 }
 
-void metadata_log::schedule_attempt_to_delete_inode(inode_t inode) {
+void shard::schedule_attempt_to_delete_inode(inode_t inode) {
     return schedule_background_task([this, inode] {
         auto it = _inodes.find(inode);
         if (it == _inodes.end() or it->second.is_linked() or it->second.is_open()) {
@@ -285,7 +285,7 @@ void metadata_log::schedule_attempt_to_delete_inode(inode_t inode) {
     });
 }
 
-std::variant<inode_t, metadata_log::path_lookup_error> metadata_log::do_path_lookup(const std::string& path) const noexcept {
+std::variant<inode_t, shard::path_lookup_error> shard::do_path_lookup(const std::string& path) const noexcept {
     if (path.empty() or path[0] != '/') {
         return path_lookup_error::NOT_ABSOLUTE;
     }
@@ -341,7 +341,7 @@ std::variant<inode_t, metadata_log::path_lookup_error> metadata_log::do_path_loo
     return components_stack.back();
 }
 
-future<inode_t> metadata_log::path_lookup(const std::string& path) const {
+future<inode_t> shard::path_lookup(const std::string& path) const {
     return std::visit(overloaded {
         [](path_lookup_error error) {
             switch (error) {
@@ -360,7 +360,7 @@ future<inode_t> metadata_log::path_lookup(const std::string& path) const {
     }, do_path_lookup(path));
 }
 
-file_offset_t metadata_log::file_size(inode_t inode) const {
+file_offset_t shard::file_size(inode_t inode) const {
     auto it = _inodes.find(inode);
     if (it == _inodes.end()) {
         throw invalid_inode_exception();
@@ -376,7 +376,7 @@ file_offset_t metadata_log::file_size(inode_t inode) const {
     }, it->second.contents);
 }
 
-stat_data metadata_log::stat(inode_t inode) const {
+stat_data shard::stat(inode_t inode) const {
     auto it = _inodes.find(inode);
     if (it == _inodes.end())
         throw invalid_inode_exception();
@@ -396,7 +396,7 @@ stat_data metadata_log::stat(inode_t inode) const {
     };
 }
 
-stat_data metadata_log::stat(const std::string& path) const {
+stat_data shard::stat(const std::string& path) const {
     return std::visit(overloaded {
         [](path_lookup_error error) -> stat_data {
             switch (error) {
@@ -415,45 +415,45 @@ stat_data metadata_log::stat(const std::string& path) const {
     }, do_path_lookup(path));
 }
 
-future<> metadata_log::create_file(std::string path, file_permissions perms) {
+future<> shard::create_file(std::string path, file_permissions perms) {
     return create_file_operation::perform(*this, std::move(path), std::move(perms), create_semantics::CREATE_FILE).discard_result();
 }
 
-future<inode_t> metadata_log::create_and_open_file(std::string path, file_permissions perms) {
+future<inode_t> shard::create_and_open_file(std::string path, file_permissions perms) {
     return create_file_operation::perform(*this, std::move(path), std::move(perms), create_semantics::CREATE_AND_OPEN_FILE);
 }
 
-future<inode_t> metadata_log::create_and_open_unlinked_file(file_permissions perms) {
+future<inode_t> shard::create_and_open_unlinked_file(file_permissions perms) {
     return create_and_open_unlinked_file_operation::perform(*this, std::move(perms));
 }
 
-future<> metadata_log::create_directory(std::string path, file_permissions perms) {
+future<> shard::create_directory(std::string path, file_permissions perms) {
     return create_file_operation::perform(*this, std::move(path), std::move(perms), create_semantics::CREATE_DIR).discard_result();
 }
 
-future<> metadata_log::link_file(inode_t inode, std::string path) {
+future<> shard::link_file(inode_t inode, std::string path) {
     return link_file_operation::perform(*this, inode, std::move(path));
 }
 
-future<> metadata_log::link_file(std::string source, std::string destination) {
+future<> shard::link_file(std::string source, std::string destination) {
     return path_lookup(std::move(source)).then([this, destination = std::move(destination)](inode_t inode) {
         return link_file(inode, std::move(destination));
     });
 }
 
-future<> metadata_log::unlink_file(std::string path) {
+future<> shard::unlink_file(std::string path) {
     return unlink_or_remove_file_operation::perform(*this, std::move(path), remove_semantics::FILE_ONLY);
 }
 
-future<> metadata_log::remove_directory(std::string path) {
+future<> shard::remove_directory(std::string path) {
     return unlink_or_remove_file_operation::perform(*this, std::move(path), remove_semantics::DIR_ONLY);
 }
 
-future<> metadata_log::remove(std::string path) {
+future<> shard::remove(std::string path) {
     return unlink_or_remove_file_operation::perform(*this, std::move(path), remove_semantics::FILE_OR_DIR);
 }
 
-future<inode_t> metadata_log::open_file(std::string path) {
+future<inode_t> shard::open_file(std::string path) {
     return path_lookup(path).then([this](inode_t inode) {
         auto inode_it = _inodes.find(inode);
         if (inode_it == _inodes.end()) {
@@ -465,7 +465,7 @@ future<inode_t> metadata_log::open_file(std::string path) {
         }
 
         // TODO: can be replaced by sth like _inode_info.during_delete
-        return _locks.with_lock(metadata_log::locks::shared {inode}, [this, inode_info = std::move(inode_info), inode] {
+        return _locks.with_lock(shard::locks::shared {inode}, [this, inode_info = std::move(inode_info), inode] {
             if (not inode_exists(inode)) {
                 return make_exception_future<inode_t>(operation_became_invalid_exception());
             }
@@ -475,7 +475,7 @@ future<inode_t> metadata_log::open_file(std::string path) {
     });
 }
 
-future<> metadata_log::close_file(inode_t inode) {
+future<> shard::close_file(inode_t inode) {
     auto inode_it = _inodes.find(inode);
     if (inode_it == _inodes.end()) {
         return make_exception_future(invalid_inode_exception());
@@ -486,7 +486,7 @@ future<> metadata_log::close_file(inode_t inode) {
     }
 
 
-    return _locks.with_lock(metadata_log::locks::shared {inode}, [this, inode, inode_info] {
+    return _locks.with_lock(shard::locks::shared {inode}, [this, inode, inode_info] {
         if (not inode_exists(inode)) {
             return make_exception_future(operation_became_invalid_exception());
         }
@@ -502,17 +502,17 @@ future<> metadata_log::close_file(inode_t inode) {
     });
 }
 
-future<size_t> metadata_log::read(inode_t inode, file_offset_t pos, void* buffer, size_t len,
+future<size_t> shard::read(inode_t inode, file_offset_t pos, void* buffer, size_t len,
         const io_priority_class& pc) {
     return read_operation::perform(*this, inode, pos, buffer, len, pc);
 }
 
-future<size_t> metadata_log::write(inode_t inode, file_offset_t pos, const void* buffer, size_t len,
+future<size_t> shard::write(inode_t inode, file_offset_t pos, const void* buffer, size_t len,
         const io_priority_class& pc) {
     return write_operation::perform(*this, inode, pos, buffer, len, pc);
 }
 
-future<> metadata_log::truncate(inode_t inode, file_offset_t size) {
+future<> shard::truncate(inode_t inode, file_offset_t size) {
     return truncate_operation::perform(*this, inode, size);
 }
 
@@ -522,4 +522,4 @@ future<> metadata_log::truncate(inode_t inode, file_offset_t size) {
 // hard if we write metadata to the last cluster and there is no enough room to write these delete operations. We have to
 // guarantee that the filesystem is in a recoverable state then.
 
-} // namespace seastar::fs
+} // namespace seastar::fs::backend

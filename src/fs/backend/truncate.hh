@@ -21,36 +21,36 @@
 
 #pragma once
 
+#include "fs/backend/shard.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
-#include "fs/metadata_log.hh"
 #include "fs/units.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
 
-namespace seastar::fs {
+namespace seastar::fs::backend {
 
 class truncate_operation {
 
-    metadata_log& _metadata_log;
+    shard& _shard;
     inode_t _inode;
 
-    truncate_operation(metadata_log& metadata_log, inode_t inode)
-        : _metadata_log(metadata_log), _inode(inode) {
+    truncate_operation(shard& shard, inode_t inode)
+        : _shard(shard), _inode(inode) {
     }
 
     future<> truncate(file_offset_t size) {
-        auto inode_it = _metadata_log._inodes.find(_inode);
-        if (inode_it == _metadata_log._inodes.end()) {
+        auto inode_it = _shard._inodes.find(_inode);
+        if (inode_it == _shard._inodes.end()) {
             return make_exception_future(invalid_inode_exception());
         }
         if (inode_it->second.is_directory()) {
             return make_exception_future(is_directory_exception());
         }
 
-        return _metadata_log._locks.with_lock(metadata_log::locks::shared {_inode}, [this, size] {
-            if (not _metadata_log.inode_exists(_inode)) {
+        return _shard._locks.with_lock(shard::locks::shared {_inode}, [this, size] {
+            if (not _shard.inode_exists(_inode)) {
                 return make_exception_future(operation_became_invalid_exception());
             }
             return do_truncate(size);
@@ -66,25 +66,25 @@ class truncate_operation {
             curr_time_ns
         };
 
-        switch (_metadata_log.append_ondisk_entry(ondisk_entry)) {
-        case metadata_log::append_result::TOO_BIG:
+        switch (_shard.append_ondisk_entry(ondisk_entry)) {
+        case shard::append_result::TOO_BIG:
             return make_exception_future(cluster_size_too_small_to_perform_operation_exception());
-        case metadata_log::append_result::NO_SPACE:
+        case shard::append_result::NO_SPACE:
             return make_exception_future(no_more_space_exception());
-        case metadata_log::append_result::APPENDED:
-            _metadata_log.memory_only_truncate(_inode, size);
-            _metadata_log.memory_only_update_mtime(_inode, curr_time_ns);
+        case shard::append_result::APPENDED:
+            _shard.memory_only_truncate(_inode, size);
+            _shard.memory_only_update_mtime(_inode, curr_time_ns);
             return make_ready_future();
         }
         __builtin_unreachable();
     }
 
 public:
-    static future<> perform(metadata_log& metadata_log, inode_t inode, file_offset_t size) {
-        return do_with(truncate_operation(metadata_log, inode), [size](auto& obj) {
+    static future<> perform(shard& shard, inode_t inode, file_offset_t size) {
+        return do_with(truncate_operation(shard, inode), [size](auto& obj) {
             return obj.truncate(size);
         });
     }
 };
 
-} // namespace seastar::fs
+} // namespace seastar::fs::backend

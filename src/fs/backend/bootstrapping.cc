@@ -19,16 +19,16 @@
  * Copyright (C) 2020 ScyllaDB
  */
 
+#include "fs/backend/bootstrapping.hh"
 #include "fs/bitwise.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
-#include "fs/metadata_log_bootstrap.hh"
 #include "seastar/util/log.hh"
 
-namespace seastar::fs {
+namespace seastar::fs::backend {
 
 namespace {
-logger mlogger("fs_metadata_bootstrap");
+logger mlogger("fs_backend_bootstrap");
 } // namespace
 
 bool data_reader::read(void* destination, size_t size) {
@@ -73,16 +73,16 @@ std::optional<data_reader> data_reader::extract(size_t size) {
     return data_reader(_data + _pos - size, size);
 }
 
-metadata_log_bootstrap::metadata_log_bootstrap(metadata_log& metadata_log, cluster_range available_clusters)
-: _metadata_log(metadata_log)
+bootstrapping::bootstrapping(shard& shard, cluster_range available_clusters)
+: _shard(shard)
 , _available_clusters(available_clusters)
-, _curr_cluster_data(decltype(_curr_cluster_data)::aligned(metadata_log._alignment, metadata_log._cluster_size))
+, _curr_cluster_data(decltype(_curr_cluster_data)::aligned(shard._alignment, shard._cluster_size))
 {}
 
-future<> metadata_log_bootstrap::bootstrap(cluster_id_t first_metadata_cluster_id, fs_shard_id_t fs_shards_pool_size,
+future<> bootstrapping::bootstrap(cluster_id_t first_metadata_cluster_id, fs_shard_id_t fs_shards_pool_size,
         fs_shard_id_t fs_shard_id) {
     _next_cluster = first_metadata_cluster_id;
-    mlogger.debug(">>>>  Started bootstraping  <<<<");
+    mlogger.debug(">>>>  Started bootstrapping  <<<<");
     return do_with((cluster_id_t)first_metadata_cluster_id, [this](cluster_id_t& last_cluster) {
         return do_until([this] { return not _next_cluster.has_value(); }, [this, &last_cluster] {
             cluster_id_t curr_cluster = *_next_cluster;
@@ -92,12 +92,12 @@ future<> metadata_log_bootstrap::bootstrap(cluster_id_t first_metadata_cluster_i
             last_cluster = curr_cluster;
             return bootstrap_cluster(curr_cluster);
         }).then([this, &last_cluster] {
-            mlogger.debug("Data bootstraping is done");
-            // Initialize _curr_cluster_buff
-            _metadata_log._curr_cluster_buff = _metadata_log._curr_cluster_buff->virtual_constructor();
-            mlogger.debug("Initializing _curr_cluster_buff: cluster {}, pos {}", last_cluster, _curr_cluster.last_checkpointed_pos());
-            _metadata_log._curr_cluster_buff->init_from_bootstrapped_cluster(_metadata_log._cluster_size,
-                    _metadata_log._alignment, cluster_id_to_offset(last_cluster, _metadata_log._cluster_size),
+            mlogger.debug("Data bootstrapping is done");
+            // Initialize _metadata_log_cbuf
+            _shard._metadata_log_cbuf = _shard._metadata_log_cbuf->virtual_constructor();
+            mlogger.debug("Initializing _metadata_log_cbuf: cluster {}, pos {}", last_cluster, _curr_cluster.last_checkpointed_pos());
+            _shard._metadata_log_cbuf->init_from_bootstrapped_cluster(_shard._cluster_size,
+                    _shard._alignment, cluster_id_to_offset(last_cluster, _shard._cluster_size),
                     _curr_cluster.last_checkpointed_pos());
         });
     }).then([this, fs_shards_pool_size, fs_shard_id] {
@@ -115,19 +115,19 @@ future<> metadata_log_bootstrap::bootstrap(cluster_id_t first_metadata_cluster_i
         cluster_id_t datalog_cluster_id = free_clusters.front();
         free_clusters.pop_front();
 
-        _metadata_log._curr_data_writer = _metadata_log._curr_data_writer->virtual_constructor();
-        _metadata_log._curr_data_writer->init(_metadata_log._cluster_size, _metadata_log._alignment,
-                cluster_id_to_offset(datalog_cluster_id, _metadata_log._cluster_size));
+        _shard._medium_data_log_cw = _shard._medium_data_log_cw->virtual_constructor();
+        _shard._medium_data_log_cw->init(_shard._cluster_size, _shard._alignment,
+                cluster_id_to_offset(datalog_cluster_id, _shard._cluster_size));
 
         mlogger.debug("free clusters: {}", free_clusters.size());
-        _metadata_log._cluster_allocator = cluster_allocator(std::move(_taken_clusters), std::move(free_clusters));
+        _shard._cluster_allocator = cluster_allocator(std::move(_taken_clusters), std::move(free_clusters));
 
         // Reset _inode_allocator
         std::optional<inode_t> max_inode_no;
-        if (not _metadata_log._inodes.empty()) {
-            max_inode_no =_metadata_log._inodes.rbegin()->first;
+        if (not _shard._inodes.empty()) {
+            max_inode_no =_shard._inodes.rbegin()->first;
         }
-        _metadata_log._inode_allocator = shard_inode_allocator(fs_shards_pool_size, fs_shard_id, max_inode_no);
+        _shard._inode_allocator = shard_inode_allocator(fs_shards_pool_size, fs_shard_id, max_inode_no);
 
         // TODO: what about orphaned inodes: maybe they are remnants of unlinked files and we need to delete them,
         //       or maybe not?
@@ -135,28 +135,28 @@ future<> metadata_log_bootstrap::bootstrap(cluster_id_t first_metadata_cluster_i
     });
 }
 
-future<> metadata_log_bootstrap::bootstrap_cluster(cluster_id_t curr_cluster) {
-    disk_offset_t curr_cluster_disk_offset = cluster_id_to_offset(curr_cluster, _metadata_log._cluster_size);
-    mlogger.debug("Bootstraping from cluster {}...", curr_cluster);
-    return _metadata_log._device.read(curr_cluster_disk_offset, _curr_cluster_data.get_write(),
-            _metadata_log._cluster_size).then([this, curr_cluster](size_t bytes_read) {
-        if (bytes_read != _metadata_log._cluster_size) {
+future<> bootstrapping::bootstrap_cluster(cluster_id_t curr_cluster) {
+    disk_offset_t curr_cluster_disk_offset = cluster_id_to_offset(curr_cluster, _shard._cluster_size);
+    mlogger.debug("Bootstrapping from cluster {}...", curr_cluster);
+    return _shard._device.read(curr_cluster_disk_offset, _curr_cluster_data.get_write(),
+            _shard._cluster_size).then([this, curr_cluster](size_t bytes_read) {
+        if (bytes_read != _shard._cluster_size) {
             return make_exception_future(std::runtime_error("Failed to read whole cluster of the metadata log"));
         }
 
         mlogger.debug("Read cluster {}", curr_cluster);
-        _curr_cluster = data_reader(_curr_cluster_data.get(), _metadata_log._cluster_size);
+        _curr_cluster = data_reader(_curr_cluster_data.get(), _shard._cluster_size);
         return bootstrap_read_cluster();
     });
 }
 
-future<> metadata_log_bootstrap::bootstrap_read_cluster() {
+future<> bootstrapping::bootstrap_read_cluster() {
     // Process cluster: the data layout format is:
     // | checkpoint1 | data1... | checkpoint2 | data2... | ... |
     return do_with(false, [this](bool& whole_log_ended) {
         return do_until([this, &whole_log_ended] { return whole_log_ended or _next_cluster.has_value(); },
                 [this, &whole_log_ended] {
-            _curr_cluster.align_curr_pos(_metadata_log._alignment);
+            _curr_cluster.align_curr_pos(_shard._alignment);
             _curr_cluster.checkpoint_curr_pos();
 
             if (not read_and_check_checkpoint()) {
@@ -173,7 +173,7 @@ future<> metadata_log_bootstrap::bootstrap_read_cluster() {
     });
 }
 
-bool metadata_log_bootstrap::read_and_check_checkpoint() {
+bool bootstrapping::read_and_check_checkpoint() {
     mlogger.debug("Processing checkpoint at {}", _curr_cluster.curr_pos());
     ondisk_type entry_type;
     ondisk_checkpoint checkpoint;
@@ -207,7 +207,7 @@ bool metadata_log_bootstrap::read_and_check_checkpoint() {
     return true;
 }
 
-future<> metadata_log_bootstrap::bootstrap_checkpointed_data() {
+future<> bootstrapping::bootstrap_checkpointed_data() {
     return do_with(ondisk_type {}, [this](ondisk_type& entry_type) {
         return do_until([this, &entry_type] { return not _curr_checkpoint.read_entry(entry_type); },
                 [this, &entry_type] {
@@ -252,7 +252,7 @@ future<> metadata_log_bootstrap::bootstrap_checkpointed_data() {
     });
 }
 
-future<> metadata_log_bootstrap::bootstrap_next_metadata_cluster() {
+future<> bootstrapping::bootstrap_next_metadata_cluster() {
     ondisk_next_metadata_cluster entry;
     if (not _curr_checkpoint.read_entry(entry)) {
         return invalid_entry_exception();
@@ -266,28 +266,28 @@ future<> metadata_log_bootstrap::bootstrap_next_metadata_cluster() {
     return now();
 }
 
-bool metadata_log_bootstrap::inode_exists(inode_t inode) {
-    return _metadata_log._inodes.count(inode) != 0;
+bool bootstrapping::inode_exists(inode_t inode) {
+    return _shard._inodes.count(inode) != 0;
 }
 
-future<> metadata_log_bootstrap::bootstrap_create_inode() {
+future<> bootstrapping::bootstrap_create_inode() {
     ondisk_create_inode entry;
     if (not _curr_checkpoint.read_entry(entry) or inode_exists(entry.inode)) {
         return invalid_entry_exception();
     }
 
-    _metadata_log.memory_only_create_inode(entry.inode, entry.is_directory,
+    _shard.memory_only_create_inode(entry.inode, entry.is_directory,
             ondisk_metadata_to_metadata(entry.metadata));
     return now();
 }
 
-future<> metadata_log_bootstrap::bootstrap_delete_inode() {
+future<> bootstrapping::bootstrap_delete_inode() {
     ondisk_delete_inode entry;
     if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
         return invalid_entry_exception();
     }
 
-    inode_info& inode_info = _metadata_log._inodes.at(entry.inode);
+    inode_info& inode_info = _shard._inodes.at(entry.inode);
     if (inode_info.links_count > 0) {
         return invalid_entry_exception(); // Only unlinked inodes may be deleted
     }
@@ -296,17 +296,17 @@ future<> metadata_log_bootstrap::bootstrap_delete_inode() {
         return invalid_entry_exception(); // Only empty directories may be deleted
     }
 
-    _metadata_log.memory_only_delete_inode(entry.inode);
+    _shard.memory_only_delete_inode(entry.inode);
     return now();
 }
 
-future<> metadata_log_bootstrap::bootstrap_small_write() {
+future<> bootstrapping::bootstrap_small_write() {
     ondisk_small_write_header entry;
     if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
         return invalid_entry_exception();
     }
 
-    if (not _metadata_log._inodes[entry.inode].is_file()) {
+    if (not _shard._inodes[entry.inode].is_file()) {
         return invalid_entry_exception();
     }
 
@@ -316,22 +316,22 @@ future<> metadata_log_bootstrap::bootstrap_small_write() {
     }
     temporary_buffer<uint8_t>& data = *data_opt;
 
-    _metadata_log.memory_only_small_write(entry.inode, entry.offset, std::move(data));
-    _metadata_log.memory_only_update_mtime(entry.inode, entry.time_ns);
+    _shard.memory_only_small_write(entry.inode, entry.offset, std::move(data));
+    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
     return now();
 }
 
-future<> metadata_log_bootstrap::bootstrap_medium_write() {
+future<> bootstrapping::bootstrap_medium_write() {
     ondisk_medium_write entry;
     if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
         return invalid_entry_exception();
     }
 
-    if (not _metadata_log._inodes[entry.inode].is_file()) {
+    if (not _shard._inodes[entry.inode].is_file()) {
         return invalid_entry_exception();
     }
 
-    cluster_id_t data_cluster_id = offset_to_cluster_id(entry.disk_offset, _metadata_log._cluster_size);
+    cluster_id_t data_cluster_id = offset_to_cluster_id(entry.disk_offset, _shard._cluster_size);
     if (_available_clusters.beg > data_cluster_id or
             _available_clusters.end <= data_cluster_id) {
         return invalid_entry_exception();
@@ -339,18 +339,18 @@ future<> metadata_log_bootstrap::bootstrap_medium_write() {
     // TODO: we could check overlapping with other writes
     _taken_clusters.emplace(data_cluster_id);
 
-    _metadata_log.memory_only_disk_write(entry.inode, entry.offset, entry.disk_offset, entry.length);
-    _metadata_log.memory_only_update_mtime(entry.inode, entry.time_ns);
+    _shard.memory_only_disk_write(entry.inode, entry.offset, entry.disk_offset, entry.length);
+    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
     return now();
 }
 
-future<> metadata_log_bootstrap::bootstrap_large_write() {
+future<> bootstrapping::bootstrap_large_write() {
     ondisk_large_write entry;
     if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
         return invalid_entry_exception();
     }
 
-    if (not _metadata_log._inodes[entry.inode].is_file()) {
+    if (not _shard._inodes[entry.inode].is_file()) {
         return invalid_entry_exception();
     }
 
@@ -361,20 +361,20 @@ future<> metadata_log_bootstrap::bootstrap_large_write() {
     }
     _taken_clusters.emplace((cluster_id_t)entry.data_cluster);
 
-    _metadata_log.memory_only_disk_write(entry.inode, entry.offset,
-            cluster_id_to_offset(entry.data_cluster, _metadata_log._cluster_size), _metadata_log._cluster_size);
-    _metadata_log.memory_only_update_mtime(entry.inode, entry.time_ns);
+    _shard.memory_only_disk_write(entry.inode, entry.offset,
+            cluster_id_to_offset(entry.data_cluster, _shard._cluster_size), _shard._cluster_size);
+    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
     return now();
 }
 
 // TODO: copy pasting :(
-future<> metadata_log_bootstrap::bootstrap_large_write_without_mtime() {
+future<> bootstrapping::bootstrap_large_write_without_mtime() {
     ondisk_large_write_without_mtime entry;
     if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
         return invalid_entry_exception();
     }
 
-    if (not _metadata_log._inodes[entry.inode].is_file()) {
+    if (not _shard._inodes[entry.inode].is_file()) {
         return invalid_entry_exception();
     }
 
@@ -385,27 +385,27 @@ future<> metadata_log_bootstrap::bootstrap_large_write_without_mtime() {
     }
     _taken_clusters.emplace((cluster_id_t)entry.data_cluster);
 
-    _metadata_log.memory_only_disk_write(entry.inode, entry.offset,
-            cluster_id_to_offset(entry.data_cluster, _metadata_log._cluster_size), _metadata_log._cluster_size);
+    _shard.memory_only_disk_write(entry.inode, entry.offset,
+            cluster_id_to_offset(entry.data_cluster, _shard._cluster_size), _shard._cluster_size);
     return now();
 }
 
-future<> metadata_log_bootstrap::bootstrap_truncate() {
+future<> bootstrapping::bootstrap_truncate() {
     ondisk_truncate entry;
     if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.inode)) {
         return invalid_entry_exception();
     }
 
-    if (not _metadata_log._inodes[entry.inode].is_file()) {
+    if (not _shard._inodes[entry.inode].is_file()) {
         return invalid_entry_exception();
     }
 
-    _metadata_log.memory_only_truncate(entry.inode, entry.size);
-    _metadata_log.memory_only_update_mtime(entry.inode, entry.time_ns);
+    _shard.memory_only_truncate(entry.inode, entry.size);
+    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
     return now();
 }
 
-future<> metadata_log_bootstrap::bootstrap_add_dir_entry() {
+future<> bootstrapping::bootstrap_add_dir_entry() {
     ondisk_add_dir_entry_header entry;
     if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.dir_inode) or
             not inode_exists(entry.entry_inode)) {
@@ -419,25 +419,25 @@ future<> metadata_log_bootstrap::bootstrap_add_dir_entry() {
 
     // Only files may be linked as not to create cycles (directories are created and linked using
     // CREATE_INODE_AS_DIR_ENTRY)
-    if (not _metadata_log._inodes[entry.entry_inode].is_file()) {
+    if (not _shard._inodes[entry.entry_inode].is_file()) {
         return invalid_entry_exception();
     }
 
-    if (not _metadata_log._inodes[entry.dir_inode].is_directory()) {
+    if (not _shard._inodes[entry.dir_inode].is_directory()) {
         return invalid_entry_exception();
     }
-    auto& dir = _metadata_log._inodes[entry.dir_inode].get_directory();
+    auto& dir = _shard._inodes[entry.dir_inode].get_directory();
 
     if (dir.entries.count(dir_entry_name) != 0) {
         return invalid_entry_exception();
     }
 
-    _metadata_log.memory_only_add_dir_entry(dir, entry.entry_inode, std::move(dir_entry_name));
+    _shard.memory_only_add_dir_entry(dir, entry.entry_inode, std::move(dir_entry_name));
     // TODO: Maybe mtime_ns for modifying directory?
     return now();
 }
 
-future<> metadata_log_bootstrap::bootstrap_create_inode_as_dir_entry() {
+future<> bootstrapping::bootstrap_create_inode_as_dir_entry() {
     ondisk_create_inode_as_dir_entry_header entry;
     if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.dir_inode) or
             inode_exists(entry.entry_inode.inode)) {
@@ -449,23 +449,23 @@ future<> metadata_log_bootstrap::bootstrap_create_inode_as_dir_entry() {
         return invalid_entry_exception();
     }
 
-    if (not _metadata_log._inodes[entry.dir_inode].is_directory()) {
+    if (not _shard._inodes[entry.dir_inode].is_directory()) {
         return invalid_entry_exception();
     }
-    auto& dir = _metadata_log._inodes[entry.dir_inode].get_directory();
+    auto& dir = _shard._inodes[entry.dir_inode].get_directory();
 
     if (dir.entries.count(dir_entry_name) != 0) {
         return invalid_entry_exception();
     }
 
-    _metadata_log.memory_only_create_inode(entry.entry_inode.inode, entry.entry_inode.is_directory,
+    _shard.memory_only_create_inode(entry.entry_inode.inode, entry.entry_inode.is_directory,
             ondisk_metadata_to_metadata(entry.entry_inode.metadata));
-    _metadata_log.memory_only_add_dir_entry(dir, entry.entry_inode.inode, std::move(dir_entry_name));
+    _shard.memory_only_add_dir_entry(dir, entry.entry_inode.inode, std::move(dir_entry_name));
     // TODO: Maybe mtime_ns for modifying directory?
     return now();
 }
 
-future<> metadata_log_bootstrap::bootstrap_delete_dir_entry() {
+future<> bootstrapping::bootstrap_delete_dir_entry() {
     ondisk_delete_dir_entry_header entry;
     if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.dir_inode)) {
         return invalid_entry_exception();
@@ -476,22 +476,22 @@ future<> metadata_log_bootstrap::bootstrap_delete_dir_entry() {
         return invalid_entry_exception();
     }
 
-    if (not _metadata_log._inodes[entry.dir_inode].is_directory()) {
+    if (not _shard._inodes[entry.dir_inode].is_directory()) {
         return invalid_entry_exception();
     }
-    auto& dir = _metadata_log._inodes[entry.dir_inode].get_directory();
+    auto& dir = _shard._inodes[entry.dir_inode].get_directory();
 
     auto it = dir.entries.find(dir_entry_name);
     if (it == dir.entries.end()) {
         return invalid_entry_exception();
     }
 
-    _metadata_log.memory_only_delete_dir_entry(dir, std::move(dir_entry_name));
+    _shard.memory_only_delete_dir_entry(dir, std::move(dir_entry_name));
     // TODO: Maybe mtime_ns for modifying directory?
     return now();
 }
 
-future<> metadata_log_bootstrap::bootstrap_delete_inode_and_dir_entry() {
+future<> bootstrapping::bootstrap_delete_inode_and_dir_entry() {
     ondisk_delete_inode_and_dir_entry_header entry;
     if (not _curr_checkpoint.read_entry(entry) or not inode_exists(entry.dir_inode) or not inode_exists(entry.inode_to_delete)) {
         return invalid_entry_exception();
@@ -502,17 +502,17 @@ future<> metadata_log_bootstrap::bootstrap_delete_inode_and_dir_entry() {
         return invalid_entry_exception();
     }
 
-    if (not _metadata_log._inodes[entry.dir_inode].is_directory()) {
+    if (not _shard._inodes[entry.dir_inode].is_directory()) {
         return invalid_entry_exception();
     }
-    auto& dir = _metadata_log._inodes[entry.dir_inode].get_directory();
+    auto& dir = _shard._inodes[entry.dir_inode].get_directory();
 
     auto it = dir.entries.find(dir_entry_name);
     if (it == dir.entries.end()) {
         return invalid_entry_exception();
     }
 
-    inode_info& inode_to_delete_info = _metadata_log._inodes.at(entry.inode_to_delete);
+    inode_info& inode_to_delete_info = _shard._inodes.at(entry.inode_to_delete);
     // We have 2 cases:
     // - deleting dir entry and inode that it points to
     // - deleting dir entry and inode that are unrelated
@@ -532,29 +532,29 @@ future<> metadata_log_bootstrap::bootstrap_delete_inode_and_dir_entry() {
     // some (preferably all) correctness checking logic to separate functions that would allow as to reuse them, thus
     // reducing duplication to minimum
 
-    _metadata_log.memory_only_delete_dir_entry(dir, std::move(dir_entry_name));
-    _metadata_log.memory_only_delete_inode(entry.inode_to_delete);
+    _shard.memory_only_delete_dir_entry(dir, std::move(dir_entry_name));
+    _shard.memory_only_delete_inode(entry.inode_to_delete);
     // TODO: Maybe mtime_ns for modifying directory?
     return now();
 }
 
-future<> metadata_log_bootstrap::bootstrap(metadata_log& metadata_log, inode_t root_dir, cluster_id_t first_metadata_cluster_id,
+future<> bootstrapping::bootstrap(shard& shard, inode_t root_dir, cluster_id_t first_metadata_cluster_id,
         cluster_range available_clusters, fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id) {
-    // Clear the metadata log
-    metadata_log._inodes.clear();
-    metadata_log._background_futures = now();
-    metadata_log._root_dir = root_dir;
-    metadata_log._inodes.emplace(root_dir, inode_info {
+    // Reset shard to empty state
+    shard._inodes.clear();
+    shard._background_futures = now();
+    shard._root_dir = root_dir;
+    shard._inodes.emplace(root_dir, inode_info {
         0,
         0,
         {}, // TODO: change it to something meaningful
         inode_info::directory {}
     });
 
-    return do_with(metadata_log_bootstrap(metadata_log, available_clusters),
-            [first_metadata_cluster_id, fs_shards_pool_size, fs_shard_id](metadata_log_bootstrap& bootstrap) {
+    return do_with(bootstrapping(shard, available_clusters),
+            [first_metadata_cluster_id, fs_shards_pool_size, fs_shard_id](bootstrapping& bootstrap) {
                 return bootstrap.bootstrap(first_metadata_cluster_id, fs_shards_pool_size, fs_shard_id);
             });
 }
 
-} // namespace seastar::fs
+} // namespace seastar::fs::backend

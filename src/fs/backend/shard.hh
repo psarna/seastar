@@ -47,23 +47,26 @@
 #include <utility>
 #include <variant>
 
-namespace seastar::fs {
+namespace seastar::fs::backend {
 
-class metadata_log {
+class shard {
     block_device _device;
     const unit_size_t _cluster_size;
     const unit_size_t _alignment;
 
-    // Takes care of writing current cluster of serialized metadata log entries to device
-    shared_ptr<metadata_to_disk_buffer> _curr_cluster_buff;
-    shared_ptr<cluster_writer> _curr_data_writer;
-    shared_future<> _background_futures = now();
+    shared_future<> _background_futures = now(); // Background tasks
 
-    // In memory metadata
-    cluster_allocator _cluster_allocator;
-    std::map<inode_t, inode_info> _inodes;
+    // Takes care of writing metadata log entries to current metadata log cluster on device
+    shared_ptr<metadata_to_disk_buffer> _metadata_log_cbuf;
+    // Takes care of writing medium writes to current medium data log cluster on device
+    shared_ptr<cluster_writer> _medium_data_log_cw;
+
+    cluster_allocator _cluster_allocator; // Manages free clusters
+    shard_inode_allocator _inode_allocator; // Supplies new inode numbers
+
+    // Memory representation of fs metadata
     inode_t _root_dir;
-    shard_inode_allocator _inode_allocator;
+    std::map<inode_t, inode_info> _inodes;
 
     // Locks are used to ensure metadata consistency while allowing concurrent usage.
     //
@@ -157,7 +160,7 @@ class metadata_log {
     // TODO: for compaction: keep estimated metadata log size (that would take when written to disk) and
     //       the real size of metadata log taken on disk to allow for detecting when compaction
 
-    friend class metadata_log_bootstrap;
+    friend class bootstrapping;
 
     friend class create_and_open_unlinked_file_operation;
     friend class create_file_operation;
@@ -168,14 +171,14 @@ class metadata_log {
     friend class write_operation;
 
 public:
-    metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment,
-            shared_ptr<metadata_to_disk_buffer> cluster_buff, shared_ptr<cluster_writer> data_writer);
+    shard(block_device device, unit_size_t cluster_size, unit_size_t alignment,
+            shared_ptr<metadata_to_disk_buffer> metadata_log_cbuf, shared_ptr<cluster_writer> medium_data_log_cw);
 
-    metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment);
+    shard(block_device device, unit_size_t cluster_size, unit_size_t alignment);
 
-    metadata_log(const metadata_log&) = delete;
-    metadata_log& operator=(const metadata_log&) = delete;
-    metadata_log(metadata_log&&) = default;
+    shard(const shard&) = delete;
+    shard& operator=(const shard&) = delete;
+    shard(shard&&) = default;
 
     future<> bootstrap(inode_t root_dir, cluster_id_t first_metadata_cluster_id, cluster_range available_clusters,
             fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id);
@@ -227,7 +230,7 @@ private:
     [[nodiscard]] append_result append_ondisk_entry(Args&&... args) {
         using AR = append_result;
         // TODO: maybe check for errors on _background_futures to expose previous errors?
-        switch (_curr_cluster_buff->append(args...)) {
+        switch (_metadata_log_cbuf->append(args...)) {
         case metadata_to_disk_buffer::APPENDED:
             return AR::APPENDED;
         case metadata_to_disk_buffer::TOO_BIG:
@@ -241,7 +244,7 @@ private:
             break;
         }
 
-        switch (_curr_cluster_buff->append(args...)) {
+        switch (_metadata_log_cbuf->append(args...)) {
         case metadata_to_disk_buffer::APPENDED:
             return AR::APPENDED;
         case metadata_to_disk_buffer::TOO_BIG:
@@ -359,4 +362,4 @@ public:
     }
 };
 
-} // namespace seastar::fs
+} // namespace seastar::fs::backend

@@ -21,11 +21,11 @@
 
 #pragma once
 
+#include "fs/backend/shard.hh"
+#include "fs/backend/write.hh"
 #include "fs/bitwise.hh"
 #include "fs/cluster.hh"
 #include "fs/metadata_disk_entries.hh"
-#include "fs/metadata_log.hh"
-#include "fs/metadata_log_operations/write.hh"
 #include "fs/units.hh"
 #include "fs_mock_block_device.hh"
 #include "fs_mock_cluster_writer.hh"
@@ -88,7 +88,7 @@ const auto get_by_type = mock_metadata_to_disk_buffer::get_by_type<ActionType>;
 using flush_to_disk_action = mock_metadata_to_disk_buffer::action::flush_to_disk;
 using append_action = mock_metadata_to_disk_buffer::action::append;
 
-constexpr auto SMALL_WRITE_THRESHOLD = write_operation::SMALL_WRITE_THRESHOLD;
+constexpr auto SMALL_WRITE_THRESHOLD = backend::write_operation::SMALL_WRITE_THRESHOLD;
 
 using medium_write_len_t = decltype(ondisk_medium_write::length);
 using small_write_len_t = decltype(ondisk_small_write_header::length);
@@ -97,14 +97,14 @@ using unix_time_t = decltype(unix_metadata::mtime_ns);
 template<typename BlockDevice = mock_block_device_impl,
         typename MetadataToDiskBuffer = mock_metadata_to_disk_buffer,
         typename ClusterWriter = mock_cluster_writer>
-inline auto init_metadata_log(unit_size_t cluster_size, unit_size_t alignment, cluster_id_t metadata_log_cluster,
+inline auto init_shard(unit_size_t cluster_size, unit_size_t alignment, cluster_id_t metadata_log_cluster,
         cluster_range cluster_range) {
     auto dev_impl = make_shared<BlockDevice>();
-    metadata_log log(block_device(dev_impl), cluster_size, alignment,
+    backend::shard shard(block_device(dev_impl), cluster_size, alignment,
             make_shared<MetadataToDiskBuffer>(), make_shared<ClusterWriter>());
-    log.bootstrap(0, metadata_log_cluster, cluster_range, 1, 0).get();
+    shard.bootstrap(0, metadata_log_cluster, cluster_range, 1, 0).get();
 
-    return std::pair{std::move(dev_impl), std::move(log)};
+    return std::pair{std::move(dev_impl), std::move(shard)};
 }
 
 inline auto& get_current_metadata_buffer() {
@@ -119,9 +119,9 @@ inline auto& get_current_cluster_writer() {
     return created_writers.back();
 }
 
-inline inode_t create_and_open_file(metadata_log& log, std::string name = "tmp") {
-    log.create_file("/" + name, file_permissions::default_dir_permissions).get0();
-    return log.open_file("/" + name).get0();
+inline inode_t create_and_open_file(backend::shard& shard, std::string name = "tmp") {
+    shard.create_file("/" + name, file_permissions::default_dir_permissions).get0();
+    return shard.open_file("/" + name).get0();
 }
 
 inline temporary_buffer<uint8_t> gen_buffer(size_t len, bool aligned, unit_size_t alignment) {
@@ -144,10 +144,10 @@ inline temporary_buffer<uint8_t> gen_buffer(size_t len, bool aligned, unit_size_
     return buff;
 }
 
-inline void aligned_write(metadata_log& log, inode_t inode, size_t bytes_num, unit_size_t alignment) {
+inline void aligned_write(backend::shard& shard, inode_t inode, size_t bytes_num, unit_size_t alignment) {
     assert(bytes_num % alignment == 0);
     temporary_buffer<uint8_t> buff = gen_buffer(bytes_num, true, alignment);
-    size_t wrote = log.write(inode, 0, buff.get(), buff.size()).get0();
+    size_t wrote = shard.write(inode, 0, buff.get(), buff.size()).get0();
     BOOST_REQUIRE_EQUAL(wrote, buff.size());
 }
 

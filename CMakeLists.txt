@@ -671,6 +671,17 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/overloaded.hh
     include/seastar/fs/stat.hh
     include/seastar/fs/temporary_file.hh
+    src/fs/backend/bootstrapping.cc
+    src/fs/backend/bootstrapping.hh
+    src/fs/backend/create_and_open_unlinked_file.hh
+    src/fs/backend/create_file.hh
+    src/fs/backend/link_file.hh
+    src/fs/backend/read.hh
+    src/fs/backend/shard.cc
+    src/fs/backend/shard.hh
+    src/fs/backend/truncate.hh
+    src/fs/backend/unlink_or_remove_file.hh
+    src/fs/backend/write.hh
     src/fs/bitwise.hh
     src/fs/bootstrap_record.cc
     src/fs/bootstrap_record.hh
@@ -685,17 +696,6 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/inode.hh
     src/fs/inode_info.hh
     src/fs/metadata_disk_entries.hh
-    src/fs/metadata_log.cc
-    src/fs/metadata_log.hh
-    src/fs/metadata_log_bootstrap.cc
-    src/fs/metadata_log_bootstrap.hh
-    src/fs/metadata_log_operations/create_and_open_unlinked_file.hh
-    src/fs/metadata_log_operations/create_file.hh
-    src/fs/metadata_log_operations/link_file.hh
-    src/fs/metadata_log_operations/read.hh
-    src/fs/metadata_log_operations/truncate.hh
-    src/fs/metadata_log_operations/unlink_or_remove_file.hh
-    src/fs/metadata_log_operations/write.hh
     src/fs/metadata_to_disk_buffer.hh
     src/fs/path.hh
     src/fs/range.hh

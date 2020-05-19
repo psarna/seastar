@@ -20,11 +20,11 @@
  */
 
 
+#include "fs/backend/read.hh"
+#include "fs/backend/truncate.hh"
+#include "fs/backend/write.hh"
 #include "fs/bitwise.hh"
 #include "fs/cluster.hh"
-#include "fs/metadata_log_operations/read.hh"
-#include "fs/metadata_log_operations/truncate.hh"
-#include "fs/metadata_log_operations/write.hh"
 #include "fs/units.hh"
 #include "fs_metadata_common.hh"
 #include "fs_mock_block_device.hh"
@@ -50,27 +50,27 @@ constexpr unit_size_t default_alignment = 4096;
 constexpr cluster_range default_cluster_range = {1, 10};
 constexpr cluster_id_t default_metadata_log_cluster = 1;
 
-auto default_init_metadata_log() {
-    return init_metadata_log(default_cluster_size, default_alignment, default_metadata_log_cluster, default_cluster_range);
+auto default_init_shard() {
+    return init_shard(default_cluster_size, default_alignment, default_metadata_log_cluster, default_cluster_range);
 }
 
 } // namespace
 
 SEASTAR_THREAD_TEST_CASE(test_truncate_exceptions) {
-    auto [blockdev, log] = default_init_metadata_log();
-    inode_t inode = create_and_open_file(log);
+    auto [blockdev, shard] = default_init_shard();
+    inode_t inode = create_and_open_file(shard);
     file_offset_t size = 3123;
-    BOOST_CHECK_THROW(log.truncate(inode+1, size).get0(), invalid_inode_exception);
+    BOOST_CHECK_THROW(shard.truncate(inode+1, size).get0(), invalid_inode_exception);
 }
 
 SEASTAR_THREAD_TEST_CASE(test_empty_truncate) {
     BOOST_TEST_MESSAGE("\nTest name: " << get_name());
     const unix_time_t time_ns_start = get_current_time_ns();
-    auto [blockdev, log] = default_init_metadata_log();
-    inode_t inode = create_and_open_file(log);
+    auto [blockdev, shard] = default_init_shard();
+    inode_t inode = create_and_open_file(shard);
     file_offset_t size = 3123;
     BOOST_TEST_MESSAGE("truncate size: " << size);
-    log.truncate(inode, size).get0();
+    shard.truncate(inode, size).get0();
     auto meta_buff = get_current_metadata_buffer();
     BOOST_TEST_MESSAGE("meta_buff->actions: " << meta_buff->actions);
 
@@ -87,10 +87,10 @@ SEASTAR_THREAD_TEST_CASE(test_empty_truncate) {
     temporary_buffer<uint8_t> buff = temporary_buffer<uint8_t>::aligned(default_alignment, round_up_to_multiple_of_power_of_2(size, default_alignment));
     temporary_buffer<uint8_t> read_buff = temporary_buffer<uint8_t>::aligned(default_alignment, round_up_to_multiple_of_power_of_2(size, default_alignment));
     memset(buff.get_write(), 0, size);
-    BOOST_REQUIRE_EQUAL(log.read(inode, 0, read_buff.get_write(), size).get0(), size);
+    BOOST_REQUIRE_EQUAL(shard.read(inode, 0, read_buff.get_write(), size).get0(), size);
     BOOST_REQUIRE_EQUAL(memcmp(buff.get(), read_buff.get(), size), 0);
 
-    BOOST_REQUIRE_EQUAL(log.file_size(inode), size);
+    BOOST_REQUIRE_EQUAL(shard.file_size(inode), size);
 
     BOOST_TEST_MESSAGE("");
 }
@@ -102,15 +102,15 @@ SEASTAR_THREAD_TEST_CASE(test_truncate_to_less) {
     small_write_len_t write_len = 3*default_alignment;
     file_offset_t size = 77;
 
-    auto [blockdev, log] = default_init_metadata_log();
-    inode_t inode = create_and_open_file(log);
+    auto [blockdev, shard] = default_init_shard();
+    inode_t inode = create_and_open_file(shard);
 
     temporary_buffer<uint8_t> buff = temporary_buffer<uint8_t>::aligned(default_alignment, write_len);
     memset(buff.get_write(), 'a', write_len);
-    BOOST_REQUIRE_EQUAL(log.write(inode, write_offset, buff.get(), write_len).get0(), write_len);
+    BOOST_REQUIRE_EQUAL(shard.write(inode, write_offset, buff.get(), write_len).get0(), write_len);
     auto meta_buff = get_current_metadata_buffer();
     auto actions_size_after_write = meta_buff->actions.size();
-    log.truncate(inode, size).get0();
+    shard.truncate(inode, size).get0();
     BOOST_TEST_MESSAGE("meta_buff->actions: " << meta_buff->actions);
 
     // Check metadata
@@ -124,10 +124,10 @@ SEASTAR_THREAD_TEST_CASE(test_truncate_to_less) {
 
     // Check data
     temporary_buffer<uint8_t> read_buff = temporary_buffer<uint8_t>::aligned(default_alignment, write_len);
-    BOOST_REQUIRE_EQUAL(log.read(inode, write_offset, read_buff.get_write(), size-write_offset).get0(), size-write_offset);
+    BOOST_REQUIRE_EQUAL(shard.read(inode, write_offset, read_buff.get_write(), size-write_offset).get0(), size-write_offset);
     BOOST_REQUIRE_EQUAL(memcmp(buff.get(), read_buff.get(), size-write_offset), 0);
 
-    BOOST_REQUIRE_EQUAL(log.file_size(inode), size);
+    BOOST_REQUIRE_EQUAL(shard.file_size(inode), size);
 
     BOOST_TEST_MESSAGE("");
 }
@@ -139,16 +139,16 @@ SEASTAR_THREAD_TEST_CASE(test_truncate_to_more) {
     small_write_len_t write_len = 3*default_alignment;
     file_offset_t size = 3*default_alignment+default_alignment/3;
 
-    auto [blockdev, log] = default_init_metadata_log();
-    inode_t inode = create_and_open_file(log);
+    auto [blockdev, shard] = default_init_shard();
+    inode_t inode = create_and_open_file(shard);
 
     temporary_buffer<uint8_t> buff = temporary_buffer<uint8_t>::aligned(default_alignment, write_len+default_alignment);
     memset(buff.get_write(), 0, size-write_offset);
     memset(buff.get_write(), 'a', write_len);
-    BOOST_REQUIRE_EQUAL(log.write(inode, write_offset, buff.get(), write_len).get0(), write_len);
+    BOOST_REQUIRE_EQUAL(shard.write(inode, write_offset, buff.get(), write_len).get0(), write_len);
     auto meta_buff = get_current_metadata_buffer();
     auto actions_size_after_write = meta_buff->actions.size();
-    log.truncate(inode, size).get0();
+    shard.truncate(inode, size).get0();
     BOOST_TEST_MESSAGE("meta_buff->actions: " << meta_buff->actions);
 
     // Check metadata
@@ -162,10 +162,10 @@ SEASTAR_THREAD_TEST_CASE(test_truncate_to_more) {
 
     // Check data
     temporary_buffer<uint8_t> read_buff = temporary_buffer<uint8_t>::aligned(default_alignment, write_len+default_alignment);
-    BOOST_REQUIRE_EQUAL(log.read(inode, write_offset, read_buff.get_write(), size-write_offset).get0(), size-write_offset);
+    BOOST_REQUIRE_EQUAL(shard.read(inode, write_offset, read_buff.get_write(), size-write_offset).get0(), size-write_offset);
     BOOST_REQUIRE_EQUAL(memcmp(buff.get(), read_buff.get(), size-write_offset), 0);
 
-    BOOST_REQUIRE_EQUAL(log.file_size(inode), size);
+    BOOST_REQUIRE_EQUAL(shard.file_size(inode), size);
 
     BOOST_TEST_MESSAGE("");
 }

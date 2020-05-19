@@ -21,11 +21,11 @@
 
 #pragma once
 
-#include "fs/metadata_log.hh"
+#include "fs/backend/shard.hh"
 #include "fs/path.hh"
 #include "seastar/core/future.hh"
 
-namespace seastar::fs {
+namespace seastar::fs::backend {
 
 enum class create_semantics {
     CREATE_FILE,
@@ -34,14 +34,14 @@ enum class create_semantics {
 };
 
 class create_file_operation {
-    metadata_log& _metadata_log;
+    shard& _shard;
     create_semantics _create_semantics;
     std::string _entry_name;
     file_permissions _perms;
     inode_t _dir_inode;
     inode_info::directory* _dir_info;
 
-    create_file_operation(metadata_log& metadata_log) : _metadata_log(metadata_log) {}
+    create_file_operation(shard& shard) : _shard(shard) {}
 
     future<inode_t> create_file(std::string path, file_permissions perms, create_semantics create_semantics) {
         _create_semantics = create_semantics;
@@ -62,11 +62,11 @@ class create_file_operation {
         assert(path.empty() or path.back() == '/'); // Hence fast-checking for "is directory" is done in path_lookup
 
         _perms = perms;
-        return _metadata_log.path_lookup(path).then([this](inode_t dir_inode) {
+        return _shard.path_lookup(path).then([this](inode_t dir_inode) {
             _dir_inode = dir_inode;
             // Fail-fast checks before locking (as locking may be expensive)
-            auto dir_it = _metadata_log._inodes.find(_dir_inode);
-            if (dir_it == _metadata_log._inodes.end()) {
+            auto dir_it = _shard._inodes.find(_dir_inode);
+            if (dir_it == _shard._inodes.end()) {
                 return make_exception_future<inode_t>(operation_became_invalid_exception());
             }
             assert(dir_it->second.is_directory() and "Directory cannot become file or there is a BUG in path_lookup");
@@ -76,15 +76,15 @@ class create_file_operation {
                 return make_exception_future<inode_t>(file_already_exists_exception());
             }
 
-            return _metadata_log._locks.with_locks(metadata_log::locks::shared {dir_inode},
-                    metadata_log::locks::unique {dir_inode, _entry_name}, [this] {
+            return _shard._locks.with_locks(shard::locks::shared {dir_inode},
+                    shard::locks::unique {dir_inode, _entry_name}, [this] {
                 return create_file_in_directory();
             });
         });
     }
 
     future<inode_t> create_file_in_directory() {
-        if (not _metadata_log.inode_exists(_dir_inode)) {
+        if (not _shard.inode_exists(_dir_inode)) {
             return make_exception_future<inode_t>(operation_became_invalid_exception());
         }
 
@@ -123,7 +123,7 @@ class create_file_operation {
             __builtin_unreachable();
         }();
 
-        inode_t new_inode = _metadata_log._inode_allocator.alloc();
+        inode_t new_inode = _shard._inode_allocator.alloc();
 
         ondisk_entry = {
             {
@@ -136,15 +136,15 @@ class create_file_operation {
         };
 
 
-        switch (_metadata_log.append_ondisk_entry(ondisk_entry, _entry_name.data())) {
-        case metadata_log::append_result::TOO_BIG:
+        switch (_shard.append_ondisk_entry(ondisk_entry, _entry_name.data())) {
+        case shard::append_result::TOO_BIG:
             return make_exception_future<inode_t>(cluster_size_too_small_to_perform_operation_exception());
-        case metadata_log::append_result::NO_SPACE:
+        case shard::append_result::NO_SPACE:
             return make_exception_future<inode_t>(no_more_space_exception());
-        case metadata_log::append_result::APPENDED:
-            inode_info& new_inode_info = _metadata_log.memory_only_create_inode(new_inode,
+        case shard::append_result::APPENDED:
+            inode_info& new_inode_info = _shard.memory_only_create_inode(new_inode,
                 creating_dir, unx_mtdt);
-            _metadata_log.memory_only_add_dir_entry(*_dir_info, new_inode, std::move(_entry_name));
+            _shard.memory_only_add_dir_entry(*_dir_info, new_inode, std::move(_entry_name));
 
             switch (_create_semantics) {
             case create_semantics::CREATE_FILE:
@@ -162,13 +162,13 @@ class create_file_operation {
     }
 
 public:
-    static future<inode_t> perform(metadata_log& metadata_log, std::string path, file_permissions perms,
+    static future<inode_t> perform(shard& shard, std::string path, file_permissions perms,
             create_semantics create_semantics) {
-        return do_with(create_file_operation(metadata_log),
+        return do_with(create_file_operation(shard),
                 [path = std::move(path), perms = std::move(perms), create_semantics](auto& obj) {
             return obj.create_file(std::move(path), std::move(perms), create_semantics);
         });
     }
 };
 
-} // namespace seastar::fs
+} // namespace seastar::fs::backend
