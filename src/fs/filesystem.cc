@@ -269,6 +269,27 @@ future<bootstrap_record> make_bootstrap_record(uint64_t version, unit_size_t ali
     });
 }
 
+future<size_t> write_zero_clusters(block_device& device, unit_size_t cluster_size, unit_size_t alignment,
+        disk_offset_t offset, unit_size_t cluster_nb) {
+    return do_with(allocate_aligned_buffer<uint8_t>(cluster_size * cluster_nb, alignment),
+            [&device, cluster_size, offset, cluster_nb] (auto& buf) {
+        std::fill(buf.get(), buf.get() + cluster_size * cluster_nb, 0);
+        return device.write(offset, buf.get(), cluster_size * cluster_nb);
+    });
+}
+
+future<> invalid_filesystem(block_device& device, unit_size_t cluster_size, unit_size_t alignment) {
+    constexpr unit_size_t cluster_nb_to_zero = 2; /* enough number of clusters for invalidation */
+    constexpr disk_offset_t offset = 0;
+    return write_zero_clusters(device, cluster_size, alignment, offset, cluster_nb_to_zero).then(
+            [cluster_size] (size_t ret) {
+        if (ret != cluster_size * cluster_nb_to_zero) {
+            return make_exception_future<>(filesystem_has_not_been_invalidated_exception());
+        }
+        return make_ready_future<>();
+    });
+}
+
 future<> bootfs(sharded<filesystem>& fs, std::string device_path) {
     return async([&fs, device_path = std::move(device_path)]() mutable {
         assert(thread::running_in_thread());
@@ -289,6 +310,7 @@ future<> mkfs(std::string device_path, uint64_t version, unit_size_t cluster_siz
         assert(thread::running_in_thread());
         auto device = open_block_device(device_path).get0();
         auto close_dev = defer([device] () mutable { device.close().get(); });
+        invalid_filesystem(device, cluster_size, alignment).get();
         size_t device_size = device.size().get0();
         auto record = make_bootstrap_record(version, alignment, cluster_size, root_directory, shards_nb, device_size).get0();
         record.write_to_disk(device).get();
