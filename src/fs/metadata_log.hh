@@ -84,6 +84,9 @@ class metadata_log {
     std::unordered_map<cluster_id_t, data_cluster_contents_info> _writable_data_clusters;
     std::unordered_map<cluster_id_t, data_cluster_contents_info> _read_only_data_clusters;
 
+    double _compactness;
+    size_t _max_data_compaction_memory;
+    std::vector<cluster_id_t> _compaction_ready_data_clusters;
     // Locks are used to ensure metadata consistency while allowing concurrent usage.
     //
     // Whenever one wants to create or delete inode or directory entry, one has to acquire appropriate unique lock for
@@ -206,9 +209,11 @@ class metadata_log {
 
 public:
     metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment,
-            shared_ptr<metadata_to_disk_buffer> cluster_buff, shared_ptr<cluster_writer> data_writer);
+            shared_ptr<metadata_to_disk_buffer> cluster_buff, shared_ptr<cluster_writer> data_writer,
+            double compactness, size_t max_data_compaction_memory);
 
-    metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment);
+    metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment,
+            double compactness, size_t max_data_compaction_memory);
 
     metadata_log(const metadata_log&) = delete;
     metadata_log& operator=(const metadata_log&) = delete;
@@ -241,6 +246,7 @@ private:
     void finish_writing_data_cluster(cluster_id_t cluster_id);
     void make_data_cluster_writable(cluster_id_t cluster_id);
     void free_writable_data_cluster(cluster_id_t cluster_id) noexcept;
+    void add_cluster_to_compact(cluster_id_t cluster_id, size_t size);
 
     template<class Func>
     void schedule_background_task(Func&& task) {
