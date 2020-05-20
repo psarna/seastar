@@ -36,6 +36,8 @@ using namespace fs;
 constexpr unit_size_t cluster_size = 1 * MB;
 constexpr unit_size_t alignment = 4 * KB;
 constexpr inode_t root_directory = 0;
+constexpr double compactness = -1; //not testing compaction
+constexpr size_t max_data_compaction_memory = cluster_size;
 
 future<std::set<std::string>> get_entries_from_directory(metadata_log& log, std::string dir_path) {
     return async([&log, dir_path = std::move(dir_path)] {
@@ -58,7 +60,7 @@ SEASTAR_THREAD_TEST_CASE(create_dirs_and_bootstrap_test) {
 
     {
         block_device device(dev_impl);
-        auto log = metadata_log(std::move(device), cluster_size, alignment);
+        auto log = metadata_log(std::move(device), cluster_size, alignment, compactness, max_data_compaction_memory);
         const auto close_log = defer([&log]() mutable { log.shutdown().wait(); });
         log.bootstrap(root_directory, shard_info.metadata_cluster, shard_info.available_clusters, 1, 0).wait();
 
@@ -76,7 +78,7 @@ SEASTAR_THREAD_TEST_CASE(create_dirs_and_bootstrap_test) {
 
     {
         block_device device(dev_impl);
-        auto log = metadata_log(std::move(device), cluster_size, alignment);
+        auto log = metadata_log(std::move(device), cluster_size, alignment, compactness, max_data_compaction_memory);
         const auto close_log = defer([&log]() mutable { log.shutdown().wait(); });
         log.bootstrap(root_directory, shard_info.metadata_cluster, shard_info.available_clusters, 1, 0).wait();
 

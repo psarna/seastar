@@ -49,9 +49,12 @@ constexpr unit_size_t default_cluster_size = 1 * MB;
 constexpr unit_size_t default_alignment = 4096;
 constexpr cluster_range default_cluster_range = {1, 10};
 constexpr cluster_id_t default_metadata_log_cluster = 1;
+constexpr double default_compactness = -1; //not testing compaction
+constexpr size_t default_max_data_compaction_memory = default_cluster_size;
 
 auto default_init_metadata_log() {
-    return init_metadata_log(default_cluster_size, default_alignment, default_metadata_log_cluster, default_cluster_range);
+    return init_metadata_log(default_cluster_size, default_alignment, default_metadata_log_cluster, default_cluster_range,
+            default_compactness, default_max_data_compaction_memory);
 }
 
 } // namespace

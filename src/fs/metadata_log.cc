@@ -69,20 +69,26 @@ logger mlogger("fs_metadata_log");
 } // namespace
 
 metadata_log::metadata_log(block_device device, uint32_t cluster_size, uint32_t alignment,
-    shared_ptr<metadata_to_disk_buffer> cluster_buff, shared_ptr<cluster_writer> data_writer)
+    shared_ptr<metadata_to_disk_buffer> cluster_buff, shared_ptr<cluster_writer> data_writer,
+    double compactness, size_t max_data_compaction_memory)
 : _device(std::move(device))
 , _cluster_size(cluster_size)
 , _alignment(alignment)
 , _curr_cluster_buff(std::move(cluster_buff))
 , _curr_data_writer(std::move(data_writer))
-, _inode_allocator(1, 0) {
+, _inode_allocator(1, 0)
+, _compactness(compactness)
+, _max_data_compaction_memory(max_data_compaction_memory) {
     assert(is_power_of_2(alignment));
     assert(cluster_size > 0 and cluster_size % alignment == 0);
+    assert(compactness * cluster_size <= max_data_compaction_memory);
 }
 
-metadata_log::metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment)
+metadata_log::metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment,
+    double compactness, size_t max_data_compaction_memory)
 : metadata_log(std::move(device), cluster_size, alignment,
-        make_shared<metadata_to_disk_buffer>(), make_shared<cluster_writer>()) {}
+        make_shared<metadata_to_disk_buffer>(), make_shared<cluster_writer>(),
+        compactness, max_data_compaction_memory) {}
 
 future<> metadata_log::bootstrap(inode_t root_dir, cluster_id_t first_metadata_cluster_id, cluster_range available_clusters,
         fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id) {
@@ -134,7 +140,12 @@ void metadata_log::cut_out_data_range(inode_info::file& file, file_range range) 
                     ondisk_entry_size<ondisk_medium_write>());
                 auto it = _data_cluster_contents_info_map.find(offset_to_cluster_id(disk_data.device_offset, _cluster_size));
                 assert(it != _data_cluster_contents_info_map.end());
+                size_t pre_cut_cluster_data_size = it->second->get_up_to_date_data_size();
                 it->second->cut_data(disk_data.device_offset, former.data_range, left_remains.data_range, right_remains.data_range);
+                size_t post_cut_cluster_data_size = it->second->get_up_to_date_data_size();
+                if (pre_cut_cluster_data_size > _compactness * _cluster_size && post_cut_cluster_data_size <= _compactness * _cluster_size) {
+                    add_cluster_to_compact(it->first, post_cut_cluster_data_size);
+                }
             },
             [&](const inode_data_vec::hole_data&) {
             },
@@ -322,6 +333,10 @@ void metadata_log::finish_writing_data_cluster(cluster_id_t cluster_id) {
     assert(!nh.empty());
     auto insert_res = _read_only_data_clusters.insert(std::move(nh));
     assert(insert_res.inserted);
+    size_t up_to_date_size = insert_res.position->second.get_up_to_date_data_size();
+    if (up_to_date_size <= _compactness * _cluster_size) {
+        add_cluster_to_compact(cluster_id, up_to_date_size);
+    }
 }
 
 void metadata_log::make_data_cluster_writable(cluster_id_t cluster_id) {
@@ -337,6 +352,19 @@ void metadata_log::free_writable_data_cluster(cluster_id_t cluster_id) noexcept 
     num = _writable_data_clusters.erase(cluster_id);
     assert(num == 1);
     _cluster_allocator.free(cluster_id);
+}
+
+void metadata_log::add_cluster_to_compact(cluster_id_t cluster_id, size_t size) {
+    if (size == 0) {
+        schedule_background_task([this, cluster_id] {return compact_data_clusters(std::vector<cluster_id_t>{cluster_id});});
+    } else {
+        if ((_compaction_ready_data_clusters.size() + 1) * _compactness * _cluster_size > _max_data_compaction_memory) {
+            std::vector<cluster_id_t> move_vec = {};
+            _compaction_ready_data_clusters.swap(move_vec);
+            schedule_background_task([this, move_vec = std::move(move_vec)] {return compact_data_clusters(std::move(move_vec));});
+        }
+        _compaction_ready_data_clusters.push_back(cluster_id);
+    }
 }
 
 void metadata_log::schedule_flush_of_curr_cluster() {

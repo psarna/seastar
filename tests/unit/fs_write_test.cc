@@ -50,6 +50,8 @@ constexpr unit_size_t default_cluster_size = 1 * MB;
 constexpr unit_size_t default_alignment = 4096;
 constexpr cluster_range default_cluster_range = {1, 10};
 constexpr cluster_id_t default_metadata_log_cluster = 1;
+constexpr double default_compactness = -1; //not testing compaction
+constexpr size_t default_max_data_compaction_memory = default_cluster_size;
 constexpr medium_write_len_t min_medium_write_len =
         round_up_to_multiple_of_power_of_2(SMALL_WRITE_THRESHOLD + 1, default_alignment);
 constexpr size_t random_read_checks_nb = 100;
@@ -66,7 +68,8 @@ constexpr write_type get_write_type(size_t len) noexcept {
 }
 
 auto default_init_metadata_log() {
-    return init_metadata_log(default_cluster_size, default_alignment, default_metadata_log_cluster, default_cluster_range);
+    return init_metadata_log(default_cluster_size, default_alignment, default_metadata_log_cluster, default_cluster_range,
+            default_compactness, default_max_data_compaction_memory);
 }
 
 auto default_gen_buffer(size_t len, bool aligned) {
@@ -780,7 +783,8 @@ SEASTAR_THREAD_TEST_CASE(random_writes_and_reads_test) {
             << ", writes_nb: " << writes_nb
             << ", random_read_checks_nb_every_write: " << random_read_checks_nb_every_write);
 
-    auto [blockdev, log] = init_metadata_log(cluster_size, default_alignment, 1, {1, available_cluster_nb + 1});
+    auto [blockdev, log] = init_metadata_log(cluster_size, default_alignment, 1, {1, available_cluster_nb + 1},
+            default_compactness, default_max_data_compaction_memory);
     inode_t inode = create_and_open_file(log);
     resizable_buff_type real_file_data;
 
@@ -817,7 +821,8 @@ SEASTAR_THREAD_TEST_CASE(aligned_writes_and_reads_test) {
             << ", writes_nb: " << writes_nb
             << ", random_read_checks_nb_every_write: " << random_read_checks_nb_every_write);
 
-    auto [blockdev, log] = init_metadata_log(cluster_size, default_alignment, 1, {1, available_cluster_nb + 1});
+    auto [blockdev, log] = init_metadata_log(cluster_size, default_alignment, 1, {1, available_cluster_nb + 1},
+            default_compactness, default_max_data_compaction_memory);
     inode_t inode = create_and_open_file(log);
     resizable_buff_type real_file_data;
 
