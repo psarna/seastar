@@ -40,7 +40,8 @@ shard_tester::shard_tester(const struct shard_tester::options& options)
 , c_writers(*c_writers_holder.get())
 , clock_holder(make_shared<FreezingClock>())
 , clock(*clock_holder.get())
-, shard(block_device(device_holder), options.cluster_size, options.alignment,
+, shard(block_device(device_holder), options.cluster_size, options.alignment, options.compactness,
+        options.max_data_compaction_memory,
         seastar::make_shared<metadata_log::to_disk_buffer_mocker>(ml_buffers_holder.get()),
         seastar::make_shared<cluster_writer_mocker>(c_writers_holder.get()), clock_holder)
 {

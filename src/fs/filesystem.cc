@@ -53,8 +53,10 @@ void throw_if_not_absolute(const std::string& path) {
     }
 }
 
-future<> filesystem::start(std::string device_path, foreign_ptr<lw_shared_ptr<global_shared_root>> root) {
-    return async([this, device_path = std::move(device_path), root = std::move(root)]() mutable {
+future<> filesystem::start(std::string device_path, foreign_ptr<lw_shared_ptr<global_shared_root>> root,
+        double compactness, size_t max_data_compaction_memory) {
+    return async([this, device_path = std::move(device_path), root = std::move(root), compactness,
+            max_data_compaction_memory]() mutable {
         assert(thread::running_in_thread());
         _foreign_root = shared_root(std::move(root), container());
 
@@ -71,7 +73,8 @@ future<> filesystem::start(std::string device_path, foreign_ptr<lw_shared_ptr<gl
 
         const auto shard_info = record.shards_info[shard_id];
 
-        _backend_shard = make_shared<backend::shard>(std::move(device), record.cluster_size, record.alignment);
+        _backend_shard = make_shared<backend::shard>(std::move(device), record.cluster_size, record.alignment,
+                compactness, max_data_compaction_memory);
         _backend_shard->bootstrap(record.root_directory, shard_info.metadata_cluster,
                 shard_info.available_clusters, record.shards_nb(), shard_id).get();
 
@@ -299,16 +302,18 @@ future<> invalid_metadata_clusters(block_device& device, std::vector<bootstrap_r
     });
 }
 
-future<> bootfs(sharded<filesystem>& fs, std::string device_path) {
-    return async([&fs, device_path = std::move(device_path)]() mutable {
+future<> bootfs(sharded<filesystem>& fs, std::string device_path, double compactness, size_t max_data_compaction_memory) {
+    return async([&fs, device_path = std::move(device_path), compactness, max_data_compaction_memory]() mutable {
         assert(thread::running_in_thread());
         auto root = make_lw_shared<global_shared_root>();
         fs.start().get();
 
         /* Each shard should have own version of shared_root */
-        parallel_for_each(smp::all_cpus(), [&fs, device_path = std::move(device_path), root] (shard_id id) mutable {
-            return fs.invoke_on(id, [device_path, root = make_foreign(root)](filesystem& f) mutable {
-                return f.start(std::move(device_path), std::move(root));
+        parallel_for_each(smp::all_cpus(),
+                [&fs, device_path = std::move(device_path), root, compactness, max_data_compaction_memory] (shard_id id) mutable {
+            return fs.invoke_on(id,
+                    [device_path, root = make_foreign(root), compactness, max_data_compaction_memory](filesystem& f) mutable {
+                return f.start(std::move(device_path), std::move(root), compactness, max_data_compaction_memory);
             });
         }).get();
     });

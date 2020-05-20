@@ -57,7 +57,7 @@ SEASTAR_THREAD_TEST_CASE(create_dirs_and_bootstrap_test) {
             bootstrap_shard();
             BOOST_REQUIRE_EQUAL(get_entries_from_dir(shard, "/"), dirs);
             // Bootstrapping new shard
-            backend::shard other_shard(block_device(device_holder), options.cluster_size, options.alignment);
+            backend::shard other_shard(block_device(device_holder), options.cluster_size, options.alignment, options.compactness, options.max_data_compaction_memory);
             bootstrap_shard(other_shard);
             BOOST_REQUIRE_EQUAL(get_entries_from_dir(other_shard, "/"), dirs);
         }

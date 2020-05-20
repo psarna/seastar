@@ -42,6 +42,7 @@ class shard {
     const disk_offset_t _alignment;
 
     shared_future<> _background_futures = now(); // Background tasks
+    shared_future<> _background_compactions = now();
 
     // Takes care of writing metadata log entries to current metadata log cluster on device
     shared_ptr<metadata_log::to_disk_buffer> _metadata_log_cbuf;
@@ -75,6 +76,9 @@ class shard {
     std::unordered_map<cluster_id_t, data_cluster_contents_info> _writable_data_clusters;
     std::unordered_map<cluster_id_t, data_cluster_contents_info> _read_only_data_clusters;
 
+    double _compactness;
+    size_t _max_data_compaction_memory;
+    std::vector<cluster_id_t> _compaction_ready_data_clusters;
     // Locks are used to ensure metadata consistency while allowing concurrent usage.
     //
     // Whenever one wants to create or delete inode or directory entry, one has to acquire appropriate unique lock for
@@ -196,10 +200,12 @@ class shard {
     friend class write_operation;
 
 public:
-    shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment,
-            shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf, shared_ptr<cluster_writer> medium_data_log_cw, shared_ptr<Clock> clock);
+    shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment, double compactness,
+        size_t max_data_compaction_memory, shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf,
+        shared_ptr<cluster_writer> medium_data_log_cw, shared_ptr<Clock> clock);
 
-    shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment);
+    shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment, double compactness,
+        size_t max_data_compaction_memory);
 
     shard(const shard&) = delete;
     shard& operator=(const shard&) = delete;
@@ -232,6 +238,7 @@ private:
     void finish_writing_data_cluster(cluster_id_t cluster_id);
     void make_data_cluster_writable(cluster_id_t cluster_id);
     void free_writable_data_cluster(cluster_id_t cluster_id) noexcept;
+    void add_cluster_to_compact(cluster_id_t cluster_id, size_t size);
 
     template<class Func> // TODO: use noncopyable_function
     void schedule_background_task(Func&& task) {
@@ -239,6 +246,11 @@ private:
         //        in the caller: scheduling background task is atomic and not asynchronous, thus no locking is required
         //        on resources because no other continuation will be scheduled
         _background_futures = when_all_succeed(_background_futures.get_future(), std::forward<Func>(task));
+    }
+
+    template<class Func>
+    void schedule_background_compaction(Func&& task) {
+        _background_compactions = _background_compactions.get_future().then([task = std::move(task)](){return task();});
     }
 
     void schedule_flush_of_curr_cluster();
@@ -395,7 +407,9 @@ public:
 
     // All disk-related errors will be exposed here
     future<> flush_log() {
-        return flush_curr_cluster();
+        return _background_compactions.get_future().then([this] {
+            return flush_curr_cluster();
+        });
     }
 
     // Returns approximation of available space for storing data

@@ -51,6 +51,10 @@ public:
         return _up_to_date_data_size == 0;
     }
 
+    size_t get_up_to_date_data_size() const noexcept {
+        return _up_to_date_data_size;
+    }
+
     void read_lock_nowait() {
         bool locked = _lock.try_read_lock();
         assert(locked);

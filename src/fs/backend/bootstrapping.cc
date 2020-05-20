@@ -74,6 +74,7 @@ future<> bootstrapping::bootstrap(cluster_id_t first_metadata_cluster_id, fs_sha
         fs_shard_id_t fs_shard_id) {
     _next_cluster = first_metadata_cluster_id;
     mlogger.debug(">>>>  Started bootstrapping  <<<<");
+    // TODO: disable all compaction during bootstrapping -- it cannot happen now because we just replay the metadata log
     return do_until([this] { return !_next_cluster; }, [this] {
         _curr_cluster.id = *_next_cluster;
         _next_cluster = std::nullopt;
