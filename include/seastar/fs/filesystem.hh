@@ -42,7 +42,7 @@ public:
     filesystem& operator=(const filesystem&) = delete;
     filesystem(filesystem&&) = default;
 
-    future<> start(std::string device_path, shared_root root);
+    future<> start(std::string device_path, foreign_ptr<lw_shared_ptr<global_shared_root>> root);
 
     future<shared_entries> local_root();
 
