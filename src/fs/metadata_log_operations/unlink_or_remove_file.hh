@@ -130,7 +130,7 @@ class unlink_or_remove_file_operation {
                 return make_exception_future(directory_not_empty_exception());
             }
 
-            assert(_entry_inode_info->directories_containing_file == 1);
+            assert(_entry_inode_info->links_count == 1);
 
             // Ready to delete directory
             ondisk_delete_inode_and_dir_entry_header ondisk_entry;

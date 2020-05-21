@@ -68,7 +68,7 @@ struct inode_data_vec {
 
 struct inode_info {
     uint32_t opened_files_count = 0; // Number of open files referencing inode
-    uint32_t directories_containing_file = 0;
+    uint32_t links_count = 0;
     unix_metadata metadata;
 
     struct directory {
@@ -196,7 +196,7 @@ struct inode_info {
     std::variant<directory, file> contents;
 
     bool is_linked() const noexcept {
-        return directories_containing_file != 0;
+        return links_count != 0;
     }
 
     bool is_open() const noexcept {

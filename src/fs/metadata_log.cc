@@ -209,7 +209,7 @@ void metadata_log::memory_only_add_dir_entry(inode_info::directory& dir, inode_t
 
     bool inserted = dir.entries.emplace(std::move(entry_name), entry_inode).second;
     assert(inserted);
-    ++it->second.directories_containing_file;
+    ++it->second.links_count;
 }
 
 void metadata_log::memory_only_delete_dir_entry(inode_info::directory& dir, std::string entry_name) {
@@ -220,7 +220,7 @@ void metadata_log::memory_only_delete_dir_entry(inode_info::directory& dir, std:
     assert(entry_it != _inodes.end());
     assert(entry_it->second.is_linked());
 
-    --entry_it->second.directories_containing_file;
+    --entry_it->second.links_count;
     dir.entries.erase(it);
 }
 

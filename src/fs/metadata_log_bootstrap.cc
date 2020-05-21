@@ -288,7 +288,7 @@ future<> metadata_log_bootstrap::bootstrap_delete_inode() {
     }
 
     inode_info& inode_info = _metadata_log._inodes.at(entry.inode);
-    if (inode_info.directories_containing_file > 0) {
+    if (inode_info.links_count > 0) {
         return invalid_entry_exception(); // Only unlinked inodes may be deleted
     }
 
@@ -517,7 +517,7 @@ future<> metadata_log_bootstrap::bootstrap_delete_inode_and_dir_entry() {
     // - deleting dir entry and inode that it points to
     // - deleting dir entry and inode that are unrelated
     // Third case: deleting dir entry and inode of this dir is not possible as we do not permit unlinked directories
-    if (inode_to_delete_info.directories_containing_file > (it->second == entry.inode_to_delete)) {
+    if (inode_to_delete_info.links_count > (it->second == entry.inode_to_delete)) {
         return invalid_entry_exception(); // Only unlinked inodes may be deleted
     }
     if (inode_to_delete_info.is_directory() and not inode_to_delete_info.get_directory().entries.empty()) {
