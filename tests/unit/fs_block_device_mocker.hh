@@ -24,6 +24,7 @@
 #include "fs/units.hh"
 
 #include <seastar/fs/block_device.hh>
+#include <seastar/fs/units.hh>
 #include <string>
 
 namespace seastar::fs {
