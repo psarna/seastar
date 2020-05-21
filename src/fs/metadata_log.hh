@@ -28,7 +28,6 @@
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
 #include "fs/metadata_to_disk_buffer.hh"
-#include "fs/units.hh"
 #include "fs/unix_metadata.hh"
 #include "fs/value_shared_lock.hh"
 #include "seastar/core/file-types.hh"
@@ -39,6 +38,7 @@
 #include "seastar/core/temporary_buffer.hh"
 #include "seastar/fs/exceptions.hh"
 #include "seastar/fs/stat.hh"
+#include "seastar/fs/units.hh"
 
 #include <chrono>
 #include <cstddef>

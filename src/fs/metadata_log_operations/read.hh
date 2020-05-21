@@ -26,13 +26,13 @@
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_log.hh"
-#include "fs/units.hh"
 #include "seastar/core/do_with.hh"
 #include "seastar/core/file.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
 #include "seastar/fs/exceptions.hh"
 #include "seastar/fs/overloaded.hh"
+#include "seastar/fs/units.hh"
 
 #include <cstdint>
 #include <cstring>

@@ -22,11 +22,11 @@
 #include "fs/bootstrap_record.hh"
 #include "fs/inode.hh"
 #include "fs/metadata_log.hh"
-#include "fs/units.hh"
 #include "fs_mock_block_device.hh"
 
 #include "seastar/core/units.hh"
 #include "seastar/fs/block_device.hh"
+#include "seastar/fs/units.hh"
 #include "seastar/testing/thread_test_case.hh"
 #include "seastar/util/defer.hh"
 

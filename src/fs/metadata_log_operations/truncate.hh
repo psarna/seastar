@@ -25,9 +25,9 @@
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
 #include "fs/metadata_log.hh"
-#include "fs/units.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
+#include "seastar/fs/units.hh"
 
 namespace seastar::fs {
 

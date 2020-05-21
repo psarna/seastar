@@ -22,10 +22,10 @@
 #pragma once
 
 #include "fs/inode.hh"
-#include "fs/units.hh"
 #include "fs/unix_metadata.hh"
 #include "seastar/core/temporary_buffer.hh"
 #include "seastar/fs/overloaded.hh"
+#include "seastar/fs/units.hh"
 
 #include <map>
 #include <variant>

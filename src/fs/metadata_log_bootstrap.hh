@@ -27,12 +27,12 @@
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
 #include "fs/metadata_to_disk_buffer.hh"
-#include "fs/units.hh"
 #include "fs/metadata_log.hh"
 #include "seastar/core/do_with.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
 #include "seastar/core/temporary_buffer.hh"
+#include "seastar/fs/units.hh"
 
 #include <boost/crc.hpp>
 #include <cstddef>

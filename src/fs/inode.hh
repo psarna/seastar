@@ -22,15 +22,12 @@
 #pragma once
 
 #include "fs/bitwise.hh"
-#include "fs/units.hh"
+#include "seastar/fs/units.hh"
 
 #include <cstdint>
 #include <optional>
 
 namespace seastar::fs {
-
-// Last log2(fs_shards_pool_size bits) of the inode number contain the id of shard that owns the inode
-using inode_t = uint64_t;
 
 // Obtains shard id of the shard owning @p inode.
 //@p fs_shards_pool_size is the number of file system shards rounded up to a power of 2

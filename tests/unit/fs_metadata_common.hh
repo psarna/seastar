@@ -26,13 +26,13 @@
 #include "fs/metadata_disk_entries.hh"
 #include "fs/metadata_log.hh"
 #include "fs/metadata_log_operations/write.hh"
-#include "fs/units.hh"
 #include "fs_mock_block_device.hh"
 #include "fs_mock_cluster_writer.hh"
 #include "fs_mock_metadata_to_disk_buffer.hh"
 
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/temporary_buffer.hh>
+#include <seastar/fs/units.hh>
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/test_runner.hh>
 

@@ -37,4 +37,7 @@ using file_range = range<file_offset_t>;
 
 using fs_shard_id_t = uint32_t;
 
+// Last log2(fs_shards_pool_size bits) of the inode number contain the id of shard that owns the inode
+using inode_t = uint64_t;
+
 } // namespace seastar::fs

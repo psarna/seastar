@@ -35,7 +35,6 @@
 #include "fs/metadata_log_operations/write.hh"
 #include "fs/metadata_to_disk_buffer.hh"
 #include "fs/path.hh"
-#include "fs/units.hh"
 #include "fs/unix_metadata.hh"
 #include "seastar/core/aligned_buffer.hh"
 #include "seastar/core/do_with.hh"
@@ -46,6 +45,7 @@
 #include "seastar/fs/exceptions.hh"
 #include "seastar/fs/overloaded.hh"
 #include "seastar/fs/stat.hh"
+#include "seastar/fs/units.hh"
 
 #include <boost/crc.hpp>
 #include <boost/range/irange.hpp>

@@ -674,6 +674,7 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/shared_root.hh
     include/seastar/fs/stat.hh
     include/seastar/fs/temporary_file.hh
+    include/seastar/fs/units.hh
     src/fs/bitwise.hh
     src/fs/bootstrap_record.cc
     src/fs/bootstrap_record.hh
@@ -707,7 +708,6 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/range.hh
     src/fs/shared_root.cc
     src/fs/to_disk_buffer.hh
-    src/fs/units.hh
     src/fs/unix_metadata.hh
     src/fs/value_shared_lock.hh
   )

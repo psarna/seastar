@@ -21,10 +21,9 @@
 
 #pragma once
 
-#include "fs/units.hh"
-
 #include <cstring>
 #include <seastar/fs/block_device.hh>
+#include <seastar/fs/units.hh>
 
 namespace seastar::fs {
 

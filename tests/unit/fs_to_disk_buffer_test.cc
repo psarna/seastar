@@ -21,12 +21,12 @@
 
 #include "fs/bitwise.hh"
 #include "fs/to_disk_buffer.hh"
-#include "fs/units.hh"
 #include "fs_mock_block_device.hh"
 
 #include <cstring>
 #include <seastar/core/units.hh>
 #include <seastar/fs/block_device.hh>
+#include <seastar/fs/units.hh>
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/test_runner.hh>
 #include <seastar/testing/thread_test_case.hh>

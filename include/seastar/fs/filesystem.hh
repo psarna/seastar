@@ -28,7 +28,7 @@
 #include "seastar/core/sharded.hh"
 #include "seastar/core/shared_ptr.hh"
 #include "seastar/core/shared_mutex.hh"
-#include "fs/units.hh" /* FIXME: absolute include */
+#include "seastar/fs/units.hh" /* FIXME: absolute include */
 
 namespace seastar::fs {
 
