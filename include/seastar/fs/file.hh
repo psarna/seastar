@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include "fs/file_handle.hh"
+#include "file_handle.hh"
 
 #include "seastar/core/file.hh"
 #include "seastar/core/future.hh"

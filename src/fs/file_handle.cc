@@ -19,45 +19,17 @@
  * Copyright (C) 2020 ScyllaDB
  */
 
-#pragma once
-
+#include "seastar/fs/file_handle.hh"
 #include "fs/metadata_log.hh"
-#include "fs/units.hh"
-
-#include "seastar/core/file.hh"
-#include "seastar/core/reactor.hh"
-#include "seastar/core/sharded.hh"
 
 namespace seastar::fs {
 
-class seastarfs_file_handle_impl;
-
-using shared_file_handle = shared_ptr<seastarfs_file_handle_impl>;
-
-class seastarfs_file_handle_impl {
-protected:
-    std::optional<inode_t> _inode;
-public:
-    explicit seastarfs_file_handle_impl(inode_t inode) : _inode(inode) {}
-    virtual ~seastarfs_file_handle_impl() { if (_inode) { seastar_logger.warn("inode has not been closed"); } }
-
-    explicit operator bool() const noexcept { return bool(_inode); }
-
-    virtual future<size_t> write(uint64_t pos, const void* buffer, size_t len, const io_priority_class &pc) = 0;
-    virtual future<size_t> read(uint64_t pos, void* buffer, size_t len, const io_priority_class& pc) = 0;
-    virtual future<> flush() = 0;
-    virtual future<stat_data> stat() = 0;
-    virtual future<> truncate(uint64_t length) = 0;
-    virtual future<file_offset_t> size() = 0;
-    virtual future<> close() = 0;
-};
-
 class local_file_handle_impl : virtual public seastarfs_file_handle_impl {
-    lw_shared_ptr<metadata_log> _log;
+    shared_ptr<metadata_log> _log;
 public:
-    explicit local_file_handle_impl(lw_shared_ptr<metadata_log> log, inode_t inode)
-    : seastarfs_file_handle_impl(inode)
-    , _log(std::move(log))
+    explicit local_file_handle_impl(shared_ptr<metadata_log> log, inode_t inode)
+        : seastarfs_file_handle_impl(inode)
+        , _log(std::move(log))
     {}
 
     ~local_file_handle_impl() override = default;
@@ -94,11 +66,11 @@ public:
 };
 
 class foreign_file_handle_impl : virtual public seastarfs_file_handle_impl {
-    foreign_ptr<lw_shared_ptr<metadata_log>> _log;
+    foreign_ptr<shared_ptr<metadata_log>> _log;
 public:
-    explicit foreign_file_handle_impl(lw_shared_ptr<metadata_log> log, inode_t inode)
-    : seastarfs_file_handle_impl(inode)
-    , _log(make_foreign(std::move(log)))
+    explicit foreign_file_handle_impl(shared_ptr<metadata_log> log, inode_t inode)
+        : seastarfs_file_handle_impl(inode)
+        , _log(make_foreign(std::move(log)))
     {}
 
     ~foreign_file_handle_impl() override = default;
@@ -168,8 +140,8 @@ private:
     }
 };
 
-inline future<shared_file_handle>
-make_seastarfs_file_handle_impl(lw_shared_ptr<metadata_log> log, inode_t inode, unsigned caller_id) {
+future<shared_file_handle>
+make_seastarfs_file_handle_impl(shared_ptr<metadata_log> log, inode_t inode, unsigned caller_id) {
     if (caller_id == this_shard_id()) {
         return make_ready_future<shared_file_handle>(make_shared<local_file_handle_impl>(std::move(log), inode));
     }
