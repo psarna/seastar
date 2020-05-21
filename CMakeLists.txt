@@ -668,6 +668,7 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/block_device.hh
     include/seastar/fs/exceptions.hh
     include/seastar/fs/file.hh
+    include/seastar/fs/file_handle.hh
     include/seastar/fs/filesystem.hh
     include/seastar/fs/overloaded.hh
     include/seastar/fs/shared_root.hh
@@ -684,7 +685,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/device_reader.cc
     src/fs/device_reader.hh
     src/fs/file.cc
-    src/fs/file_handle.hh
+    src/fs/file_handle.cc
     src/fs/filesystem.cc
     src/fs/inode.hh
     src/fs/inode_info.hh
