@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include "fs/shared_root.hh"
+#include "shared_root.hh"
 
 #include "seastar/core/future.hh"
 #include "seastar/core/sharded.hh"

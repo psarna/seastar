@@ -674,6 +674,7 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/file.hh
     include/seastar/fs/filesystem.hh
     include/seastar/fs/overloaded.hh
+    include/seastar/fs/shared_root.hh
     include/seastar/fs/range.hh
     include/seastar/fs/stat.hh
     include/seastar/fs/unit_types.hh
@@ -711,7 +712,6 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/temporary_file.hh
     src/fs/range.hh
     src/fs/shared_root.cc
-    src/fs/shared_root.hh
     src/fs/to_disk_buffer.hh
     src/fs/unix_metadata.hh
     src/fs/val_or_err.hh
