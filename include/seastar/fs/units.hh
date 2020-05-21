@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include "fs/range.hh"
+#include "seastar/fs/range.hh"
 
 #include <cstdint>
 
