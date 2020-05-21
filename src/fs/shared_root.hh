@@ -61,14 +61,14 @@ public:
     virtual future<> add_entries(shared_entries entries) = 0;
 };
 
-shared_ptr<shared_root_impl> make_shared_root_impl(lw_shared_ptr<global_shared_root> root, unsigned owner_id);
+shared_ptr<shared_root_impl> make_shared_root_impl(foreign_ptr<lw_shared_ptr<global_shared_root>> root);
 
 class shared_root {
     shared_ptr<shared_root_impl> _shared_root;
     sharded<fs::filesystem>* _fs; /* only for updating cache on all shards */
 public:
     shared_root();
-    explicit shared_root(lw_shared_ptr<global_shared_root> root, unsigned owner_id, sharded<filesystem>& fs);
+    explicit shared_root(foreign_ptr<lw_shared_ptr<global_shared_root>> root, sharded<filesystem>& fs);
 
     shared_root(const shared_root&) = delete;
     shared_root& operator=(const shared_root&) = delete;
