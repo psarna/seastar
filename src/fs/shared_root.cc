@@ -19,10 +19,9 @@
  * Copyright (C) 2020 ScyllaDB
  */
 
-#include "fs/shared_root.hh"
-
 #include "seastar/core/smp.hh"
 #include "seastar/fs/exceptions.hh"
+#include "seastar/fs/shared_root.hh"
 
 namespace seastar::fs {
 
