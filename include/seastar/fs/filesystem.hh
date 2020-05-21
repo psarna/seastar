@@ -22,17 +22,21 @@
 #pragma once
 
 #include "shared_root.hh"
+#include "file_handle.hh"
 
 #include "seastar/core/future.hh"
 #include "seastar/core/sharded.hh"
 #include "seastar/core/shared_ptr.hh"
+#include "seastar/core/shared_mutex.hh"
+#include "fs/units.hh" /* FIXME: absolute include */
 
 namespace seastar::fs {
 
 class metadata_log;
+class shared_root;
 
 class filesystem final : public peering_sharded_service<filesystem> {
-    lw_shared_ptr<metadata_log> _metadata_log;
+    shared_ptr<metadata_log> _metadata_log;
     shared_root _foreign_root;
     shared_entries _cache_root;
     shared_mutex _lock; /* TODO use write-lock for remove and create, read-lock for open and list */
