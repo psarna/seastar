@@ -675,6 +675,7 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/file_handle.hh
     include/seastar/fs/filesystem.hh
     include/seastar/fs/overloaded.hh
+    include/seastar/fs/range.hh
     include/seastar/fs/shared_root.hh
     include/seastar/fs/range.hh
     include/seastar/fs/stat.hh
