@@ -24,8 +24,8 @@
 #include "seastar/core/file.hh"
 #include "seastar/core/reactor.hh"
 #include "seastar/core/sharded.hh"
-#include "../../../src/fs/inode.hh" /* FIXME: absolute include */
 #include "seastar/fs/stat.hh"
+#include "seastar/fs/units.hh"
 
 namespace seastar::fs {
 
