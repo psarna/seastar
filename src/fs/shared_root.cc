@@ -106,7 +106,7 @@ class foreign_shared_root final : public shared_root_impl {
     foreign_ptr<lw_shared_ptr<global_shared_root>> _shared_root;
 public:
     foreign_shared_root() = default;
-    explicit foreign_shared_root(lw_shared_ptr<global_shared_root> root) : _shared_root(make_foreign(std::move(root))) {}
+    explicit foreign_shared_root(foreign_ptr<lw_shared_ptr<global_shared_root>> root) : _shared_root(std::move(root)) {}
 
     foreign_shared_root(const foreign_shared_root&) = delete;
     foreign_shared_root& operator=(const foreign_shared_root&) = delete;
@@ -158,10 +158,9 @@ future<> foreign_shared_root::add_entries(shared_entries entries) {
     });
 }
 
-shared_ptr<shared_root_impl>
-make_shared_root_impl(lw_shared_ptr<global_shared_root> root, unsigned owner_id) {
-    if (owner_id == this_shard_id()) {
-        return make_shared<local_shared_root>(std::move(root));
+shared_ptr<shared_root_impl> make_shared_root_impl(foreign_ptr<lw_shared_ptr<global_shared_root>> root) {
+    if (root.get_owner_shard() == this_shard_id()) {
+        return make_shared<local_shared_root>(root.release());
     }
 
     return make_shared<foreign_shared_root>(std::move(root));
@@ -171,8 +170,8 @@ shared_root::shared_root()
     : _fs(nullptr)
 {}
 
-shared_root::shared_root(lw_shared_ptr<global_shared_root> root, unsigned owner_id, sharded<filesystem>& fs)
-    : _shared_root(make_shared_root_impl(std::move(root), owner_id))
+shared_root::shared_root(foreign_ptr<lw_shared_ptr<global_shared_root>> root, sharded<filesystem>& fs)
+    : _shared_root(make_shared_root_impl(std::move(root)))
     , _fs(&fs)
 {}
 
