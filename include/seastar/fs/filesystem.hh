@@ -21,7 +21,6 @@
 
 #pragma once
 
-#include "fs/metadata_log.hh"
 #include "fs/shared_root.hh"
 
 #include "seastar/core/future.hh"
@@ -29,6 +28,8 @@
 #include "seastar/core/shared_ptr.hh"
 
 namespace seastar::fs {
+
+class metadata_log;
 
 class filesystem final : public peering_sharded_service<filesystem> {
     lw_shared_ptr<metadata_log> _metadata_log;
