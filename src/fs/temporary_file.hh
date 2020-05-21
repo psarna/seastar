@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include "fs/units.hh"
+#include "seastar/fs/units.hh"
 #include "seastar/core/posix.hh"
 
 #include <string>
