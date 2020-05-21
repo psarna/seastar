@@ -72,7 +72,7 @@ future<> filesystem::start(std::string device_path, foreign_ptr<lw_shared_ptr<gl
 
         const auto shard_info = record.shards_info[shard_id];
 
-        _metadata_log = make_lw_shared<metadata_log>(std::move(device), record.cluster_size, record.alignment);
+        _metadata_log = make_shared<metadata_log>(std::move(device), record.cluster_size, record.alignment);
         _metadata_log->bootstrap(record.root_directory, shard_info.metadata_cluster,
                 shard_info.available_clusters, record.shards_nb(), shard_id).get();
 
