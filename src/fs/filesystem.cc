@@ -23,13 +23,13 @@
 #include "fs/cluster.hh"
 #include "fs/metadata_log.hh"
 #include "fs/path.hh"
-#include "fs/units.hh"
 
 #include "seastar/core/shared_mutex.hh"
 #include "seastar/core/thread.hh"
 #include "seastar/core/units.hh"
 #include "seastar/fs/file.hh"
 #include "seastar/fs/filesystem.hh"
+#include "seastar/fs/units.hh"
 #include "seastar/util/defer.hh"
 
 namespace seastar::fs {
