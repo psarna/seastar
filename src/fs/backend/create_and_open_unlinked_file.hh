@@ -36,6 +36,7 @@ class create_and_open_unlinked_file_operation {
         using namespace std::chrono;
         uint64_t curr_time_ns = duration_cast<nanoseconds>(system_clock::now().time_since_epoch()).count();
         unix_metadata unx_mtdt = {
+            file_type::REGULAR_FILE,
             perms,
             0, // TODO: Eventually, we'll want a user to be able to pass his credentials when bootstrapping the
             0, //       file system -- that will allow us to authorize users on startup (e.g. via LDAP or whatnot).
@@ -47,7 +48,6 @@ class create_and_open_unlinked_file_operation {
         inode_t new_inode = _shard._inode_allocator.alloc();
         ondisk_create_inode ondisk_entry {
             new_inode,
-            false,
             metadata_to_ondisk_metadata(unx_mtdt)
         };
 
@@ -57,7 +57,7 @@ class create_and_open_unlinked_file_operation {
         case shard::append_result::NO_SPACE:
             return make_exception_future<inode_t>(no_more_space_exception());
         case shard::append_result::APPENDED:
-            inode_info& new_inode_info = _shard.memory_only_create_inode(new_inode, false, unx_mtdt);
+            inode_info& new_inode_info = _shard.memory_only_create_inode(new_inode, unx_mtdt);
             // We don't have to lock, as there was no context switch since the allocation of the inode number
             ++new_inode_info.opened_files_count;
             return make_ready_future<inode_t>(new_inode);

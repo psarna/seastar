@@ -28,7 +28,13 @@
 
 namespace seastar::fs {
 
+enum class file_type : uint8_t {
+    REGULAR_FILE,
+    DIRECTORY,
+};
+
 struct unix_metadata {
+    file_type ftype;
     file_permissions perms;
     uid_t uid;
     gid_t gid;

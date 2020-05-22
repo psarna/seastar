@@ -23,6 +23,7 @@
 
 #include "fs/backend/shard.hh"
 #include "fs/path.hh"
+#include "fs/unix_metadata.hh"
 #include "seastar/core/future.hh"
 
 namespace seastar::fs::backend {
@@ -103,15 +104,6 @@ class create_file_operation {
 
         using namespace std::chrono;
         uint64_t curr_time_ns = duration_cast<nanoseconds>(system_clock::now().time_since_epoch()).count();
-        unix_metadata unx_mtdt = {
-            _perms,
-            0, // TODO: Eventually, we'll want a user to be able to pass his credentials when bootstrapping the
-            0, //       file system -- that will allow us to authorize users on startup (e.g. via LDAP or whatnot).
-            curr_time_ns,
-            curr_time_ns,
-            curr_time_ns
-        };
-
         bool creating_dir = [this] {
             switch (_create_semantics) {
             case create_semantics::CREATE_FILE:
@@ -123,12 +115,21 @@ class create_file_operation {
             __builtin_unreachable();
         }();
 
+        unix_metadata unx_mtdt = {
+            (creating_dir ? file_type::DIRECTORY : file_type::REGULAR_FILE),
+            _perms,
+            0, // TODO: Eventually, we'll want a user to be able to pass his credentials when bootstrapping the
+            0, //       file system -- that will allow us to authorize users on startup (e.g. via LDAP or whatnot).
+            curr_time_ns,
+            curr_time_ns,
+            curr_time_ns
+        };
+
         inode_t new_inode = _shard._inode_allocator.alloc();
 
         ondisk_entry = {
             {
                 new_inode,
-                creating_dir,
                 metadata_to_ondisk_metadata(unx_mtdt)
             },
             _dir_inode,
@@ -142,8 +143,7 @@ class create_file_operation {
         case shard::append_result::NO_SPACE:
             return make_exception_future<inode_t>(no_more_space_exception());
         case shard::append_result::APPENDED:
-            inode_info& new_inode_info = _shard.memory_only_create_inode(new_inode,
-                creating_dir, unx_mtdt);
+            inode_info& new_inode_info = _shard.memory_only_create_inode(new_inode, unx_mtdt);
             _shard.memory_only_add_dir_entry(*_dir_info, new_inode, std::move(_entry_name));
 
             switch (_create_semantics) {

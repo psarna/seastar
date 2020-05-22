@@ -276,8 +276,7 @@ future<> bootstrapping::bootstrap_create_inode() {
         return invalid_entry_exception();
     }
 
-    _shard.memory_only_create_inode(entry.inode, entry.is_directory,
-            ondisk_metadata_to_metadata(entry.metadata));
+    _shard.memory_only_create_inode(entry.inode, ondisk_metadata_to_metadata(entry.metadata));
     return now();
 }
 
@@ -458,8 +457,8 @@ future<> bootstrapping::bootstrap_create_inode_as_dir_entry() {
         return invalid_entry_exception();
     }
 
-    _shard.memory_only_create_inode(entry.entry_inode.inode, entry.entry_inode.is_directory,
-            ondisk_metadata_to_metadata(entry.entry_inode.metadata));
+    _shard.memory_only_create_inode(entry.entry_inode.inode,
+        ondisk_metadata_to_metadata(entry.entry_inode.metadata));
     _shard.memory_only_add_dir_entry(dir, entry.entry_inode.inode, std::move(dir_entry_name));
     // TODO: Maybe mtime_ns for modifying directory?
     return now();

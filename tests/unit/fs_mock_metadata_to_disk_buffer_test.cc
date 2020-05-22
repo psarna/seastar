@@ -86,7 +86,7 @@ SEASTAR_THREAD_TEST_CASE(actions_index_test) {
 
     BOOST_REQUIRE_EQUAL(mock_buf->append(ondisk_next_metadata_cluster {1}), APPENDED);
     mock_buf->flush_to_disk(dev).get();
-    BOOST_REQUIRE_EQUAL(mock_buf->append(ondisk_create_inode {4, 1, {5, 2, 6, 8, 4}}), APPENDED);
+    BOOST_REQUIRE_EQUAL(mock_buf->append(ondisk_create_inode {4, {1, 5, 2, 6, 8, 4}}), APPENDED);
     BOOST_REQUIRE_EQUAL(mock_buf->append(ondisk_delete_inode {1}), APPENDED);
     BOOST_REQUIRE_EQUAL(mock_buf->append(ondisk_medium_write {1, 8, 4, 6, 9}), APPENDED);
     mock_buf->flush_to_disk(dev).get();
@@ -175,7 +175,7 @@ SEASTAR_THREAD_TEST_CASE(create_inode_test) {
     auto mock_buf = create_metadata_buffer<mock_metadata_to_disk_buffer>();
     auto buf = create_metadata_buffer<metadata_to_disk_buffer>();
 
-    ondisk_create_inode create_inode_op {42, 1, {5, 2, 6, 8, 4}};
+    ondisk_create_inode create_inode_op {42, {1, 5, 2, 6, 8, 4}};
     BOOST_REQUIRE_EQUAL(buf->append(create_inode_op), APPENDED);
     BOOST_REQUIRE_EQUAL(mock_buf->append(create_inode_op), APPENDED);
 
@@ -317,8 +317,7 @@ SEASTAR_THREAD_TEST_CASE(create_inode_as_dir_entry_test) {
         {
             {
                 42,
-                1,
-                {5, 2, 6, 8, 4}
+                {1, 5, 2, 6, 8, 4}
             },
             7,
             static_cast<uint16_t>(create_inode_str.size())

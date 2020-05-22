@@ -107,7 +107,7 @@ SEASTAR_THREAD_TEST_CASE(test_too_big_create_inode) {
     BOOST_TEST_MESSAGE("\nTest name: " << get_name());
     test_data test{};
     test.buf.init_from_bootstrapped_cluster(max_siz, alignment, 0, max_siz-alignment);
-    ondisk_create_inode create_inode_op {42, 1, {5, 2, 6, 8, 4}};
+    ondisk_create_inode create_inode_op {42, {1, 5, 2, 6, 8, 4}};
     auto fill_write_op = fill_header(alignment - necessary_bytes - sizeof(ondisk_type) - sizeof(ondisk_small_write_header) - ondisk_entry_size(create_inode_op) + 1);
     auto fill_write_str = temporary_buffer<uint8_t>(fill_write_op.length);
     std::memset(fill_write_str.get_write(), fill_write_op.length, 'a');
@@ -119,7 +119,7 @@ SEASTAR_THREAD_TEST_CASE(test_create_inode) {
     BOOST_TEST_MESSAGE("\nTest name: " << get_name());
     test_data test{};
     ondisk_type create_inode_type = CREATE_INODE;
-    ondisk_create_inode create_inode_op {42, 1, {5, 2, 6, 8, 4}};
+    ondisk_create_inode create_inode_op {42, {1, 5, 2, 6, 8, 4}};
     BOOST_REQUIRE_EQUAL(test.buf.append(create_inode_op), APPENDED);
     test.buf.flush_to_disk(test.dev).get();
     disk_offset_t len_aligned = round_up_to_multiple_of_power_of_2(sizeof(ondisk_type) + sizeof(ondisk_create_inode), alignment);
@@ -348,8 +348,7 @@ SEASTAR_THREAD_TEST_CASE(test_too_big_create_inode_as_dir_entry) {
     ondisk_create_inode_as_dir_entry_header create_inode_as_dir_entry_op {
         {
             42,
-            1,
-            {5, 2, 6, 8, 4}
+            {1, 5, 2, 6, 8, 4}
         },
         7,
         static_cast<uint16_t>(10)
@@ -369,8 +368,7 @@ SEASTAR_THREAD_TEST_CASE(test_create_inode_as_dir_entry) {
     ondisk_create_inode_as_dir_entry_header create_inode_as_dir_entry_op {
         {
             42,
-            1,
-            {5, 2, 6, 8, 4}
+            {1, 5, 2, 6, 8, 4}
         },
         7,
         static_cast<uint16_t>(create_inode_as_dir_entry_str.size())
@@ -383,7 +381,7 @@ SEASTAR_THREAD_TEST_CASE(test_create_inode_as_dir_entry) {
     test.tmp_buf.trim_front(sizeof(ondisk_type) + sizeof(ondisk_checkpoint));
     BOOST_REQUIRE_EQUAL(std::memcmp(test.tmp_buf.get(), &create_inode_as_dir_entry_type, sizeof(ondisk_type)), 0);
     BOOST_REQUIRE_EQUAL(std::memcmp(test.tmp_buf.get() + sizeof(ondisk_type), &create_inode_as_dir_entry_op, sizeof(ondisk_create_inode_as_dir_entry_header)), 0);
-    BOOST_REQUIRE_EQUAL(std::memcmp(test.tmp_buf.get() + sizeof(ondisk_type) + sizeof(ondisk_create_inode_as_dir_entry_header), 
+    BOOST_REQUIRE_EQUAL(std::memcmp(test.tmp_buf.get() + sizeof(ondisk_type) + sizeof(ondisk_create_inode_as_dir_entry_header),
         create_inode_as_dir_entry_str.get(), create_inode_as_dir_entry_str.size()), 0);
 }
 
@@ -419,7 +417,7 @@ SEASTAR_THREAD_TEST_CASE(test_delete_dir_entry) {
     test.tmp_buf.trim_front(sizeof(ondisk_type) + sizeof(ondisk_checkpoint));
     BOOST_REQUIRE_EQUAL(std::memcmp(test.tmp_buf.get(), &delete_dir_entry_type, sizeof(ondisk_type)), 0);
     BOOST_REQUIRE_EQUAL(std::memcmp(test.tmp_buf.get() + sizeof(ondisk_type), &delete_dir_entry_op, sizeof(ondisk_delete_dir_entry_header)), 0);
-    BOOST_REQUIRE_EQUAL(std::memcmp(test.tmp_buf.get() + sizeof(ondisk_type) + sizeof(ondisk_delete_dir_entry_header), 
+    BOOST_REQUIRE_EQUAL(std::memcmp(test.tmp_buf.get() + sizeof(ondisk_type) + sizeof(ondisk_delete_dir_entry_header),
         delete_dir_entry_str.get(), delete_dir_entry_str.size()), 0);
 }
 
@@ -457,6 +455,6 @@ SEASTAR_THREAD_TEST_CASE(test_delete_inode_and_dir_entry) {
     test.tmp_buf.trim_front(sizeof(ondisk_type) + sizeof(ondisk_checkpoint));
     BOOST_REQUIRE_EQUAL(std::memcmp(test.tmp_buf.get(), &delete_inode_and_dir_entry_type, sizeof(ondisk_type)), 0);
     BOOST_REQUIRE_EQUAL(std::memcmp(test.tmp_buf.get() + sizeof(ondisk_type), &delete_inode_and_dir_entry_op, sizeof(ondisk_delete_inode_and_dir_entry_header)), 0);
-    BOOST_REQUIRE_EQUAL(std::memcmp(test.tmp_buf.get() + sizeof(ondisk_type) + sizeof(ondisk_delete_inode_and_dir_entry_header), 
+    BOOST_REQUIRE_EQUAL(std::memcmp(test.tmp_buf.get() + sizeof(ondisk_type) + sizeof(ondisk_delete_inode_and_dir_entry_header),
         delete_inode_and_dir_entry_str.get(), delete_inode_and_dir_entry_str.size()), 0);
 }

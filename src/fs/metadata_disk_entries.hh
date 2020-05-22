@@ -28,6 +28,7 @@
 namespace seastar::fs {
 
 struct ondisk_unix_metadata {
+    uint8_t ftype;
     uint32_t perms;
     uint32_t uid;
     uint32_t gid;
@@ -36,6 +37,7 @@ struct ondisk_unix_metadata {
     uint64_t ctime_ns;
 } __attribute__((packed));
 
+static_assert(sizeof(decltype(ondisk_unix_metadata::ftype)) >= sizeof(decltype(unix_metadata::ftype)));
 static_assert(sizeof(decltype(ondisk_unix_metadata::perms)) >= sizeof(decltype(unix_metadata::perms)));
 static_assert(sizeof(decltype(ondisk_unix_metadata::uid)) >= sizeof(decltype(unix_metadata::uid)));
 static_assert(sizeof(decltype(ondisk_unix_metadata::gid)) >= sizeof(decltype(unix_metadata::gid)));
@@ -45,8 +47,9 @@ static_assert(sizeof(decltype(ondisk_unix_metadata::ctime_ns)) >= sizeof(decltyp
 
 inline unix_metadata ondisk_metadata_to_metadata(const ondisk_unix_metadata& ondisk_metadata) noexcept {
     unix_metadata res;
-    static_assert(sizeof(ondisk_metadata) == 36,
+    static_assert(sizeof(ondisk_metadata) == 37,
             "metadata size changed: check if above static asserts and below assignments need update");
+    res.ftype = static_cast<decltype(res.ftype)>(ondisk_metadata.ftype);
     res.perms = static_cast<file_permissions>(ondisk_metadata.perms);
     res.uid = ondisk_metadata.uid;
     res.gid = ondisk_metadata.gid;
@@ -58,7 +61,8 @@ inline unix_metadata ondisk_metadata_to_metadata(const ondisk_unix_metadata& ond
 
 inline ondisk_unix_metadata metadata_to_ondisk_metadata(const unix_metadata& metadata) noexcept {
     ondisk_unix_metadata res;
-    static_assert(sizeof(res) == 36, "metadata size changed: check if below assignments need update");
+    static_assert(sizeof(res) == 37, "metadata size changed: check if below assignments need update");
+    res.ftype = static_cast<decltype(res.ftype)>(metadata.ftype);
     res.perms = static_cast<decltype(res.perms)>(metadata.perms);
     res.uid = metadata.uid;
     res.gid = metadata.gid;
@@ -108,7 +112,6 @@ struct ondisk_next_metadata_cluster {
 
 struct ondisk_create_inode {
     inode_t inode;
-    uint8_t is_directory;
     ondisk_unix_metadata metadata;
 } __attribute__((packed));
 

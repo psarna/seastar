@@ -27,6 +27,7 @@
 #include "fs/cluster.hh"
 #include "fs/metadata_disk_entries.hh"
 #include "fs/units.hh"
+#include "fs/unix_metadata.hh"
 #include "fs_mock_block_device.hh"
 #include "fs_mock_cluster_writer.hh"
 #include "fs_mock_metadata_to_disk_buffer.hh"
@@ -161,7 +162,12 @@ inline bool operator==(const ondisk_unix_metadata& l, const ondisk_unix_metadata
 }
 
 inline std::ostream& operator<<(std::ostream& os, const ondisk_unix_metadata& metadata) {
-    os << "[" << metadata.perms << ",";
+    os << "[";
+    switch (file_type(metadata.ftype)) {
+    case file_type::DIRECTORY: os << "DIR,"; break;
+    case file_type::REGULAR_FILE: os << "REG,"; break;
+    }
+    os << metadata.perms << ",";
     os << metadata.uid << ",";
     os << metadata.gid << ",";
     os << metadata.btime_ns << ",";
@@ -177,7 +183,6 @@ inline std::ostream& operator<<(std::ostream& os, const ondisk_next_metadata_clu
 
 inline std::ostream& operator<<(std::ostream& os, const ondisk_create_inode& entry) {
     os << "{" << "inode=" << entry.inode;
-    os << ", is_directory=" << (int)entry.is_directory;
     // os << ", metadata=" << entry.metadata;
     return os << "}";
 }
@@ -356,7 +361,6 @@ inline void check_metadata_entries_equal(const mock_metadata_to_disk_buffer::act
     BOOST_REQUIRE(mock_metadata_to_disk_buffer::is_append_type<ondisk_create_inode>(given_action));
     auto& given_entry = mock_metadata_to_disk_buffer::get_by_append_type<ondisk_create_inode>(given_action);
     BOOST_CHECK_EQUAL(copy_value(given_entry.inode), copy_value(expected_entry.inode));
-    BOOST_CHECK_EQUAL(copy_value(given_entry.is_directory), copy_value(expected_entry.is_directory));
     BOOST_CHECK_EQUAL(copy_value(given_entry.metadata), copy_value(expected_entry.metadata));
 }
 
@@ -437,8 +441,6 @@ inline void check_metadata_entries_equal(const mock_metadata_to_disk_buffer::act
     auto& given_entry = mock_metadata_to_disk_buffer::get_by_append_type<ondisk_create_inode_as_dir_entry>(given_action);
     BOOST_CHECK_EQUAL(given_entry.entry_name, expected_entry.entry_name);
     BOOST_CHECK_EQUAL(copy_value(given_entry.header.entry_inode.inode), copy_value(expected_entry.header.entry_inode.inode));
-    BOOST_CHECK_EQUAL(copy_value(given_entry.header.entry_inode.is_directory),
-            copy_value(expected_entry.header.entry_inode.is_directory));
     BOOST_CHECK_EQUAL(copy_value(given_entry.header.entry_inode.metadata),
             copy_value(expected_entry.header.entry_inode.metadata));
     BOOST_CHECK_EQUAL(copy_value(given_entry.header.dir_inode), copy_value(expected_entry.header.dir_inode));

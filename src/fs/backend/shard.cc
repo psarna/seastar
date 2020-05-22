@@ -111,18 +111,19 @@ void shard::cut_out_data_range(inode_info::file& file, file_range range) {
     });
 }
 
-inode_info& shard::memory_only_create_inode(inode_t inode, bool is_directory, unix_metadata metadata) {
+inode_info& shard::memory_only_create_inode(inode_t inode, unix_metadata metadata) {
     assert(_inodes.count(inode) == 0);
     return _inodes.emplace(inode, inode_info {
         0,
         0,
         metadata,
         [&]() -> decltype(inode_info::contents) {
-            if (is_directory) {
-                return inode_info::directory {};
+            switch (metadata.ftype) {
+            case file_type::DIRECTORY: return inode_info::directory {};
+            case file_type::REGULAR_FILE: return inode_info::file {};
             }
 
-            return inode_info::file {};
+            assert(false); // Invalid file_type
         }()
     }).first->second;
 }
