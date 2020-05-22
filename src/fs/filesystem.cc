@@ -123,11 +123,28 @@ future<> filesystem::create_directory(std::string path) {
         path = path::canonical(path);
     }
 
-    const auto entry = path::root_entry(path);
-
     /* TODO: reduce copy-paste */
-    /* TODO: add a read-write lock to synchronize operations on the current shard. */
-    if (_cache_root.find(entry) != _cache_root.end()) {
+    const auto entry = path::root_entry(path);
+    const bool is_entry = path::is_root_entry(path);
+    const bool in_cache = _cache_root.find(entry) != _cache_root.end();
+
+    if (is_entry && !in_cache) {
+        // TODO: with_exclusive
+        /* TODO: add a read-write lock to synchronize operations on the current shard. */
+        return _foreign_root.try_add_entry(entry).then(
+                [this, entry = std::move(entry), path = std::move(path)](bool result) {
+            if (!result) {
+                return make_ready_future(); //throw std::runtime_error("cannot add entry");
+            }
+            return _metadata_log->create_directory(std::move(path), file_permissions::default_file_permissions).handle_exception(
+                    [this, path = std::move(path), entry = std::move(entry)] (auto exception) mutable {
+                _cache_root.erase(entry);
+                return _foreign_root.remove_entry(std::move(path)).then([e = std::move(exception)] {
+                    return make_exception_future(e);
+                });
+            });
+        });
+    } else if (!is_entry && in_cache) {
         const auto entry_owner_id = _cache_root[entry];
         if (entry_owner_id == this_shard_id()) {
             return _metadata_log->create_directory(std::move(path), file_permissions::default_file_permissions);
@@ -137,26 +154,7 @@ future<> filesystem::create_directory(std::string path) {
         return container().invoke_on(entry_owner_id, &filesystem::create_directory, std::move(path));
     }
 
-    return update_cache().then([this, entry] {
-        return _foreign_root.try_add_entry(entry); /* FIXME: call it if path contains only one component */
-    }).then([this, path = std::move(path), entry = std::move(entry)](bool result) {
-        if (!result) { /* FIXME: info about an owner of the entry can be expired! */
-            /* FIXME: throw exception if contains only one component */
-            return make_ready_future();
-
-            // FIXME: otherwise
-            /* TODO change to lambda */
-            return container().invoke_on(_cache_root[entry], &filesystem::create_directory, std::move(path));
-        }
-        _cache_root[entry] = this_shard_id();
-        return _metadata_log->create_directory(path, file_permissions::default_file_permissions).handle_exception(
-                [this, path = std::move(path), entry = std::move(entry)](auto exception) {
-            _cache_root.erase(entry);
-            return _foreign_root.remove_entry(std::move(path)).then([e = std::move(exception)] {
-                return make_exception_future(e);
-            });
-        });
-    });
+    return make_ready_future<>();//throw std::runtime_error("cannot add entry, try later");
 }
 
 future<file> filesystem::create_and_open_file(std::string name, open_flags flags) {
@@ -182,18 +180,28 @@ future<shared_file_handle> filesystem::create_and_open_file_handler(std::string 
         path = path::canonical(path);
     }
 
+    /* TODO: reduce copy-paste */
     const auto entry = path::root_entry(path);
     const bool is_entry = path::is_root_entry(path);
+    const bool in_cache = _cache_root.find(entry) != _cache_root.end();
 
-    if (is_entry) {
+    if (is_entry && !in_cache) {
         // TODO: with_exclusive
-    } else {
-        // TODO: with_shared
-    }
-
-    /* TODO: reduce copy-paste */
-    /* TODO: add a read-write lock to synchronize operations on the current shard. */
-    if (_cache_root.find(entry) != _cache_root.end()) {
+        /* TODO: add a read-write lock to synchronize operations on the current shard. */
+        return _foreign_root.try_add_entry(entry).then(
+                [this, entry = std::move(entry), path = std::move(path), caller_id](bool result) {
+            if (!result) {
+                throw std::runtime_error("cannot add entry");
+            }
+            return create_and_open_inode(std::move(path), caller_id).handle_exception(
+                [this, path = std::move(path), entry = std::move(entry)] (auto exception) mutable {
+                _cache_root.erase(entry);
+                return _foreign_root.remove_entry(std::move(path)).then([e = std::move(exception)] {
+                    return make_exception_future<shared_file_handle>(e);
+                });
+            });
+        });
+    } else if (!is_entry && in_cache) {
         const auto entry_owner_id = _cache_root[entry];
         if (entry_owner_id == this_shard_id()) {
             return create_and_open_inode(std::move(path), caller_id);
@@ -203,28 +211,7 @@ future<shared_file_handle> filesystem::create_and_open_file_handler(std::string 
         return container().invoke_on(entry_owner_id, &filesystem::create_and_open_file_handler, std::move(path), caller_id);
     }
 
-    /* TODO: refactoring */
-    return update_cache().then([this, entry] {
-        return _foreign_root.try_add_entry(entry); /* FIXME: call it if path contains only one component */
-    }).then([this, entry = std::move(entry), path = std::move(path), caller_id](bool result) {
-        if (!result) { /* FIXME: info about an owner of the entry can be expired! */
-            /* FIXME: throw exception if contains only one component */
-
-            /* FIXME: otherwise */
-            /* TODO change to lambda */
-            return container().invoke_on(_cache_root[entry], &filesystem::create_and_open_file_handler, std::move(path), caller_id);
-        }
-
-        _cache_root[entry] = this_shard_id();
-        return create_and_open_inode(std::move(path), caller_id).handle_exception(
-                [this, path = std::move(path), entry = std::move(entry)] (auto exception) {
-            _cache_root.erase(entry);
-            return _foreign_root.remove_entry(std::move(path)).then([e = std::move(exception)] {
-                return make_exception_future<shared_file_handle>(e);
-            });
-        });
-        ;
-    });
+    throw std::runtime_error("cannot add entry, try later");
 }
 
 cluster_range which_cluster_bucket(cluster_range available_clusters, uint32_t shards_nb, uint32_t shard_id) {
