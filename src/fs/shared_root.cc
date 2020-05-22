@@ -21,6 +21,7 @@
 
 #include "seastar/core/smp.hh"
 #include "seastar/fs/exceptions.hh"
+#include "seastar/fs/filesystem.hh"
 #include "seastar/fs/shared_root.hh"
 
 namespace seastar::fs {
@@ -197,9 +198,7 @@ future<> shared_root::add_entries(shared_entries entries) {
 }
 
 future<> shared_root::update_cache() {
-    return _fs->invoke_on_all([](filesystem& fs) {
-        //return fs.update_cache(); // FIXME: invalid use of incomplete type
-    });
+    return _fs->invoke_on_all(&filesystem::update_cache);
 }
 
 }
