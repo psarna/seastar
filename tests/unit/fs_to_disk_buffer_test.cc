@@ -19,12 +19,12 @@
  * Copyright (C) 2020 ScyllaDB
  */
 
-#include "fs/bitwise.hh"
 #include "fs/to_disk_buffer.hh"
 #include "fs_mock_block_device.hh"
 
 #include <cstring>
 #include <seastar/core/units.hh>
+#include <seastar/fs/bitwise.hh>
 #include <seastar/fs/block_device.hh>
 #include <seastar/fs/units.hh>
 #include <seastar/testing/test_case.hh>

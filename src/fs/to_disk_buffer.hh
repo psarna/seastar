@@ -21,9 +21,9 @@
 
 #pragma once
 
-#include "fs/bitwise.hh"
 #include "seastar/core/future.hh"
 #include "seastar/core/temporary_buffer.hh"
+#include "seastar/fs/bitwise.hh"
 #include "seastar/fs/block_device.hh"
 #include "seastar/fs/units.hh"
 

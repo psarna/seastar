@@ -665,6 +665,7 @@ if (Seastar_EXPERIMENTAL_FS)
   target_sources(seastar
     PRIVATE
     # SeastarFS source files
+    include/seastar/fs/bitwise.hh
     include/seastar/fs/block_device.hh
     include/seastar/fs/exceptions.hh
     include/seastar/fs/file.hh
@@ -676,7 +677,6 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/stat.hh
     include/seastar/fs/temporary_file.hh
     include/seastar/fs/units.hh
-    src/fs/bitwise.hh
     src/fs/bootstrap_record.cc
     src/fs/bootstrap_record.hh
     src/fs/cluster.hh

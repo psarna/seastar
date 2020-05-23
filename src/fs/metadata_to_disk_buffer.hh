@@ -21,9 +21,9 @@
 
 #pragma once
 
-#include "fs/bitwise.hh"
 #include "fs/metadata_disk_entries.hh"
 #include "fs/to_disk_buffer.hh"
+#include "seastar/fs/bitwise.hh"
 
 #include <boost/crc.hpp>
 

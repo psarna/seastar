@@ -21,8 +21,8 @@
 
 #pragma once
 
-#include "fs/bitwise.hh"
 #include "seastar/core/shared_ptr.hh"
+#include "seastar/fs/bitwise.hh"
 #include "seastar/fs/block_device.hh"
 #include "seastar/fs/units.hh"
 

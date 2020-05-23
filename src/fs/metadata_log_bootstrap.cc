@@ -19,10 +19,10 @@
  * Copyright (C) 2020 ScyllaDB
  */
 
-#include "fs/bitwise.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
 #include "fs/metadata_log_bootstrap.hh"
+#include "seastar/fs/bitwise.hh"
 #include "seastar/util/log.hh"
 
 namespace seastar::fs {

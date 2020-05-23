@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include "fs/bitwise.hh"
+#include "seastar/fs/bitwise.hh"
 #include "seastar/fs/units.hh"
 
 namespace seastar::fs {

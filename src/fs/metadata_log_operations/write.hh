@@ -21,7 +21,6 @@
 
 #pragma once
 
-#include "fs/bitwise.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
@@ -31,6 +30,7 @@
 #include "seastar/core/future.hh"
 #include "seastar/core/shared_ptr.hh"
 #include "seastar/core/temporary_buffer.hh"
+#include "seastar/fs/bitwise.hh"
 #include "seastar/fs/units.hh"
 
 namespace seastar::fs {

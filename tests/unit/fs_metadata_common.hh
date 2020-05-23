@@ -21,7 +21,6 @@
 
 #pragma once
 
-#include "fs/bitwise.hh"
 #include "fs/cluster.hh"
 #include "fs/metadata_disk_entries.hh"
 #include "fs/metadata_log.hh"
@@ -32,6 +31,7 @@
 
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/temporary_buffer.hh>
+#include <seastar/fs/bitwise.hh>
 #include <seastar/fs/units.hh>
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/test_runner.hh>

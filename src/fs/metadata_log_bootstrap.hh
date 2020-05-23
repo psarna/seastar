@@ -21,13 +21,13 @@
 
 #pragma once
 
-#include "fs/bitwise.hh"
 #include "fs/cluster.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_disk_entries.hh"
 #include "fs/metadata_to_disk_buffer.hh"
 #include "fs/metadata_log.hh"
+#include "seastar/fs/bitwise.hh"
 #include "seastar/core/do_with.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
