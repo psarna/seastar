@@ -71,6 +71,9 @@ public:
     future<> remove(std::string path);
 
     future<> stop();
+
+    future<> flush();
+
 private:
     future<stub_file_handle> create_and_open_file_handler(std::string name);
     future<stub_file_handle> create_and_open_inode(std::string path);

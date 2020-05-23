@@ -112,6 +112,13 @@ future<> filesystem::update_cache() {
     });
 }
 
+future<> filesystem::flush() {
+    if (!_backend_shard) {
+        return make_ready_future();
+    }
+    return _backend_shard->flush_log();
+}
+
 future<> filesystem::create_directory(std::string path) {
     /* TODO: reduce copy-paste */
     throw_if_empty(path);
