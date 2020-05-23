@@ -116,6 +116,13 @@ future<> filesystem::update_cache() {
     });
 }
 
+future<> filesystem::flush() {
+    if (!_metadata_log) {
+        return make_ready_future();
+    }
+    return _metadata_log->flush_log();
+}
+
 future<> filesystem::create_directory(std::string path) {
     /* TODO: reduce copy-paste */
     throw_if_empty(path);
