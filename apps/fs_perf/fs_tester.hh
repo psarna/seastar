@@ -44,7 +44,7 @@ struct run_config {
     double write_prob;
     double small_prob;
     size_t alignment;
-    bool aligned;
+    bool aligned_ops;
     bool seq_writes;
 };
 

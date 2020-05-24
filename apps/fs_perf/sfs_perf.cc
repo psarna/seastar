@@ -100,7 +100,7 @@ int main(int ac, char** av) {
             ("small-op-size-range", bpo::value<std::string>()->default_value("0,128k"), "Range of sizes for small operations")
             ("big-op-size-range", bpo::value<std::string>()->default_value("10M,20M"), "Range of sizes for big operations")
             ("seq-writes", bpo::value<bool>()->default_value(true), "Only sequential writes (at the end of files)")
-            ("aligned", bpo::value<bool>()->default_value(true), "Align writes and reads")
+            ("aligned-ops", bpo::value<bool>()->default_value(true), "Align writes and reads")
             ("runs-nb", bpo::value<size_t>()->default_value(100), "Number of runs")
             ("device-path", bpo::value<std::string>(), "Path to block device")
             ("name", bpo::value<std::string>()->default_value("simple test"), "Test name")
@@ -133,7 +133,7 @@ int main(int ac, char** av) {
             rconf.alignment = parse_memory_size(at.configuration()["alignment"].as<std::string>());
             fsconf.alignment = rconf.alignment;
             fsconf.cluster_size = parse_memory_size(at.configuration()["cluster-size"].as<std::string>());
-            rconf.aligned = at.configuration()["aligned"].as<bool>();
+            rconf.aligned_ops = at.configuration()["aligned-ops"].as<bool>();
             rconf.small_op_size_range = parse_memory_range(at.configuration()["small-op-size-range"].as<std::string>());
             rconf.big_op_size_range = parse_memory_range(at.configuration()["big-op-size-range"].as<std::string>());
             rconf.seq_writes = at.configuration()["seq-writes"].as<bool>();

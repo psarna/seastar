@@ -110,7 +110,7 @@ int main(int ac, char** av) {
         return async([&] {
             default_config fsconf;
             run_config rconf;
-            rconf.aligned = true;
+            rconf.aligned_ops = true;
             rconf.alignment = 4 * KB;
             rconf.small_files_nb = at.configuration()["small-files-nb"].as<size_t>();
             rconf.big_files_nb = at.configuration()["big-files-nb"].as<size_t>();

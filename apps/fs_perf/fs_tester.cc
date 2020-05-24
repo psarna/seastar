@@ -52,7 +52,7 @@ temporary_buffer<uint8_t> fs_tester::gen_big_buffer() {
 }
 
 temporary_buffer<uint8_t> fs_tester::allocate_read_buffer(size_t size) {
-    return _rcfg.aligned ? temporary_buffer<uint8_t>::aligned(_rcfg.alignment, size) :
+    return _rcfg.aligned_ops ? temporary_buffer<uint8_t>::aligned(_rcfg.alignment, size) :
             temporary_buffer<uint8_t>(size);
 }
 
@@ -65,7 +65,7 @@ size_t fs_tester::gen_big_op_size() {
 }
 
 size_t fs_tester::gen_op_pos(size_t min, size_t max) {
-    if (_rcfg.aligned) {
+    if (_rcfg.aligned_ops) {
         auto aligned_min = round_up_to_multiple_of_power_of_2(min, _rcfg.alignment);
         auto aligned_max = round_down_to_multiple_of_power_of_2(max, _rcfg.alignment);
         auto dist = std::uniform_int_distribution<size_t>(aligned_min, aligned_max);
@@ -148,7 +148,7 @@ future<> fs_tester::run() {
 
 void fs_tester::setup_generators() {
     auto create_op_size_generator =
-            [this, aligned = _rcfg.aligned, alignment = _rcfg.alignment](size_t min, size_t max) ->
+            [this, aligned = _rcfg.aligned_ops, alignment = _rcfg.alignment](size_t min, size_t max) ->
             std::function<size_t()> {
         if (aligned) {
             auto aligned_min = round_up_to_multiple_of_power_of_2(min, alignment);
@@ -172,7 +172,7 @@ void fs_tester::setup_generators() {
     _base_buffer = [this] {
         temporary_buffer<uint8_t> ret;
         size_t max_size = std::max(_rcfg.small_op_size_range.second, _rcfg.big_op_size_range.second);
-        ret = _rcfg.aligned ? temporary_buffer<uint8_t>::aligned(_rcfg.alignment,
+        ret = _rcfg.aligned_ops ? temporary_buffer<uint8_t>::aligned(_rcfg.alignment,
                 round_down_to_multiple_of_power_of_2(max_size, _rcfg.alignment)) :
                 temporary_buffer<uint8_t>(max_size);
         auto dist = std::uniform_int_distribution<uint8_t>();
