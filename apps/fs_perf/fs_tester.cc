@@ -122,8 +122,7 @@ future<> fs_tester::do_read() { // TODO: dont read from holes
 }
 
 future<> fs_tester::run() {
-    // TODO: maybe add parallelism to config
-    return do_with(semaphore(64), gate(), (size_t)0, [this] (semaphore& write_parallelism, gate& gate, size_t& iter) {
+    return do_with(semaphore(_rcfg.parallelism), gate(), (size_t)0, [this] (semaphore& write_parallelism, gate& gate, size_t& iter) {
         return do_until([this, &iter] {
             return (_rcfg.written_data_limit && total_write_len >= *_rcfg.written_data_limit) ||
                     (_rcfg.read_data_limit && total_read_len >= *_rcfg.read_data_limit) ||

@@ -62,6 +62,7 @@ class TestRunner:
 			config["probabilities"]["small-prob"],
 			config["probabilities"]["write-prob"],
 			config["operations-info"]["seq-writes"],
+			config["operations-info"]["parallelism"],
 			config["operations-info"]["small-op-size-range"],
 			config["operations-info"]["big-op-size-range"])
 		for cur_basic_config in iter_basic_config:
@@ -73,8 +74,9 @@ class TestRunner:
 			test_config.basic_params["small-prob"] = cur_basic_config[4]
 			test_config.basic_params["write-prob"] = cur_basic_config[5]
 			test_config.basic_params["seq-writes"] = cur_basic_config[6]
-			test_config.basic_params["small-op-size-range"] = cur_basic_config[7]
-			test_config.basic_params["big-op-size-range"] = cur_basic_config[8]
+			test_config.basic_params["parallelism"] = cur_basic_config[7]
+			test_config.basic_params["small-op-size-range"] = cur_basic_config[8]
+			test_config.basic_params["big-op-size-range"] = cur_basic_config[9]
 			if test_config.fs_type == "SFS":
 				iter_sfs_config = itertools.product(config["sfs-config"]["alignment"],
 					config["sfs-config"]["cluster-size"],

@@ -101,6 +101,7 @@ int main(int ac, char** av) {
             ("big-op-size-range", bpo::value<std::string>()->default_value("10M,20M"), "Range of sizes for big operations")
             ("seq-writes", bpo::value<bool>()->default_value(true), "Only sequential writes (at the end of files)")
             ("aligned-ops", bpo::value<bool>()->default_value(true), "Align writes and reads")
+            ("parallelism", bpo::value<size_t>()->default_value(64), "Reads and writes parallelism")
             ("runs-nb", bpo::value<size_t>()->default_value(100), "Number of runs")
             ("device-path", bpo::value<std::string>(), "Path to block device")
             ("name", bpo::value<std::string>()->default_value("simple test"), "Test name")
@@ -134,6 +135,8 @@ int main(int ac, char** av) {
             fsconf.alignment = rconf.alignment;
             fsconf.cluster_size = parse_memory_size(at.configuration()["cluster-size"].as<std::string>());
             rconf.aligned_ops = at.configuration()["aligned-ops"].as<bool>();
+            rconf.parallelism = at.configuration()["parallelism"].as<size_t>();
+            assert(rconf.parallelism > 0);
             rconf.small_op_size_range = parse_memory_range(at.configuration()["small-op-size-range"].as<std::string>());
             rconf.big_op_size_range = parse_memory_range(at.configuration()["big-op-size-range"].as<std::string>());
             rconf.seq_writes = at.configuration()["seq-writes"].as<bool>();

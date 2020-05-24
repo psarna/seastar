@@ -99,6 +99,7 @@ int main(int ac, char** av) {
             ("small-op-size-range", bpo::value<std::string>()->default_value("0,128k"), "Range of sizes for small operations")
             ("big-op-size-range", bpo::value<std::string>()->default_value("10M,20M"), "Range of sizes for big operations")
             ("seq-writes", bpo::value<bool>()->default_value(true), "Only sequential writes (at the end of files)")
+            ("parallelism", bpo::value<size_t>()->default_value(64), "Reads and writes parallelism")
             ("runs-nb", bpo::value<size_t>()->default_value(100), "Number of runs")
             ("device-path", bpo::value<std::string>(), "Path to block device")
             ("fs-type", bpo::value<std::string>()->default_value("xfs"), "Filesystem type")
@@ -131,6 +132,8 @@ int main(int ac, char** av) {
                     std::nullopt :
                     std::make_optional(parse_memory_size(at.configuration()["read-data-limit"].as<std::string>()));
             assert(rconf.op_nb_limit || rconf.written_data_limit || rconf.read_data_limit);
+            rconf.parallelism = at.configuration()["parallelism"].as<size_t>();
+            assert(rconf.parallelism > 0);
             rconf.small_op_size_range = parse_memory_range(at.configuration()["small-op-size-range"].as<std::string>());
             rconf.big_op_size_range = parse_memory_range(at.configuration()["big-op-size-range"].as<std::string>());
             rconf.seq_writes = at.configuration()["seq-writes"].as<bool>();
