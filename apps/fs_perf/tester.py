@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import argparse
 import itertools
 import json
@@ -8,36 +8,21 @@ import yaml
 
 @dataclass
 class TestConfig:
-	fs : str = ""
-	device_path : str = ""
-	runs_nb : int = 0
-	shards_nb : int = 0
-	alignment : int = 0
-	cluster_size : int = None
-	small_files_nb : int = 0
-	big_files_nb : int = 0
-	small_prob : float = 0.0
-	write_prob : float = 0.0
-	written_data_limit : int = None
-	read_data_limit : int = None
-	op_nb_limit : int = None
-	aligned_ops : bool = False
-	seq_writes : bool = False
-	small_op_size_range : (int, int) = (0, 0)
-	big_op_size_range : (int, int) = (0, 0)
-	name : str = ""
+	fs_type : str = ""
+	fs_specific_params : dict = field(default_factory=dict)
+	basic_params : dict = field(default_factory=dict)
 
 @dataclass
-class Result:
+class Results:
 	median : float = 0.0
 	mad : float = 0.0
 	min : float = 0.0
 	max : float = 0.0
 
 @dataclass
-class TestResult:
+class TestResults:
 	config : TestConfig = TestConfig()
-	results : Result = Result()
+	results : Results = Results()
 
 class TestRunner:
 	def __init__(self, config_path, sfs_perf_path, kernel_fs_perf_path):
@@ -45,96 +30,95 @@ class TestRunner:
 		self.kernel_fs_perf_path = kernel_fs_perf_path
 		with open(config_path, "r") as f:
 			self.configs = yaml.load(f, Loader=yaml.SafeLoader)
+		self._init_common_params()
+
+	def _init_common_params(self):
+		self.common_params = {}
+		self.common_tester_params = {}
+		if len(self.configs) > 0:
+			config = self.configs[0]
+			self.common_params["name"] = config["name"]
+			self.common_params["runs-nb"] = config["runs-nb"]
+			config_limits = config["operations-info"]["limits"]
+			self.common_params["written-data-limit"] = config_limits.get("written-data-limit")
+			self.common_params["read-data-limit"] = config_limits.get("read-data-limit")
+			self.common_params["op-nb-limit"] = config_limits.get("op-nb-limit")
+			self.common_params["device-path"] = config["device-path"]
+			self.common_params["device-path"] = config["device-path"]
+			self.common_tester_params["plot-param"] = config["plot-param"]
 
 	def _iterate_configs(self):
-		for config in self.configs:
-			test_config = TestConfig()
-			test_config.name = config["name"]
-			test_config.runs_nb = config["runs_nb"]
-			test_config.shards_nb = config["shards_nb"]
-			config_limits = config["operations_info"]["limits"]
-			test_config.written_data_limit = config_limits.get("written_data_limit")
-			test_config.read_data_limit = config_limits.get("read_data_limit")
-			test_config.op_nb_limit = config_limits.get("op_nb_limit")
-			test_config.device_path = config["device_path"]
+		if len(self.configs) == 0:
+			return
+		config = self.configs[0]
 
-			for fs in config["fs"]:
-				test_config.fs = fs
-				if fs == "SFS":
-					iter_config = itertools.product(config["shards_nb"],
-						config["files_info"]["small_files_nb"],
-						config["files_info"]["big_files_nb"],
-						config["probabilities"]["small_prob"],
-						config["probabilities"]["write_prob"],
-						config["operations_info"]["seq_writes"],
-						config["operations_info"]["small_op_size_range"],
-						config["operations_info"]["big_op_size_range"],
-						config["sfs_config"]["alignment"],
-						config["sfs_config"]["cluster_size"],
-						config["sfs_config"]["aligned_ops"])
-				else: # TODO: reduce copy pasting
-					iter_config = itertools.product(config["shards_nb"],
-						config["files_info"]["small_files_nb"],
-						config["files_info"]["big_files_nb"],
-						config["probabilities"]["small_prob"],
-						config["probabilities"]["write_prob"],
-						config["operations_info"]["seq_writes"],
-						config["operations_info"]["small_op_size_range"],
-						config["operations_info"]["big_op_size_range"],
-						[None],
-						[None],
-						[None])
-				for cur_config in iter_config:
-					test_config.shards_nb = cur_config[0]
-					test_config.small_files_nb = cur_config[1]
-					test_config.big_files_nb = cur_config[2]
-					test_config.small_prob = cur_config[3]
-					test_config.write_prob = cur_config[4]
-					test_config.seq_writes = cur_config[5]
-					test_config.small_op_size_range = cur_config[6]
-					test_config.big_op_size_range = cur_config[7]
-					test_config.alignment = cur_config[8]
-					test_config.cluster_size = cur_config[9]
-					test_config.aligned_ops = cur_config[10]
-					yield test_config
+		def copy(test_config):
+			return TestConfig(test_config.fs_type, test_config.fs_specific_params.copy(), test_config.basic_params.copy())
+
+		iter_basic_config = itertools.product(config["fs"],
+			config["smp"],
+			config["files-info"]["small-files-nb"],
+			config["files-info"]["big-files-nb"],
+			config["probabilities"]["small-prob"],
+			config["probabilities"]["write-prob"],
+			config["operations-info"]["seq-writes"],
+			config["operations-info"]["small-op-size-range"],
+			config["operations-info"]["big-op-size-range"])
+		for cur_basic_config in iter_basic_config:
+			test_config = TestConfig()
+			test_config.fs_type = cur_basic_config[0]
+			test_config.basic_params["smp"] = cur_basic_config[1]
+			test_config.basic_params["small-files-nb"] = cur_basic_config[2]
+			test_config.basic_params["big-files-nb"] = cur_basic_config[3]
+			test_config.basic_params["small-prob"] = cur_basic_config[4]
+			test_config.basic_params["write-prob"] = cur_basic_config[5]
+			test_config.basic_params["seq-writes"] = cur_basic_config[6]
+			test_config.basic_params["small-op-size-range"] = cur_basic_config[7]
+			test_config.basic_params["big-op-size-range"] = cur_basic_config[8]
+			if test_config.fs_type == "SFS":
+				iter_sfs_config = itertools.product(config["sfs-config"]["alignment"],
+					config["sfs-config"]["cluster-size"],
+					config["sfs-config"]["aligned-ops"])
+				for cur_sfs_config in iter_sfs_config:
+					test_config.fs_specific_params["alignment"] = cur_sfs_config[0]
+					test_config.fs_specific_params["cluster-size"] = cur_sfs_config[1]
+					test_config.fs_specific_params["aligned-ops"] = cur_sfs_config[2]
+					yield copy(test_config)
+			else:
+				yield copy(test_config)
+
+		self.configs.pop(0)
+		self._init_common_params()
 
 	def _execute_test(self, test_config):
 		cmd = []
 		def add_cmd_option(key, val):
 			if val != None:
-				cmd.append(f"--{key}={val}")
-		def add_cmd_option_pair(key, val):
-			if val != None:
-				cmd.append(f"--{key}={val[0]},{val[1]}")
+				if type(val) == list and len(val) == 2:
+					cmd.append(f"--{key}={val[0]},{val[1]}")
+				else:
+					cmd.append(f"--{key}={val}")
 
 		json_output = "/tmp/fs_perf_results.json"
 
-		if test_config.fs == "SFS":
+		if test_config.fs_type == "SFS":
 			cmd.append(self.sfs_perf_path)
-			add_cmd_option("cluster-size", test_config.cluster_size)
-			add_cmd_option("aligned", test_config.aligned_ops)
-			add_cmd_option("alignment", test_config.alignment)
+			add_cmd_option("alignment", test_config.fs_specific_params["alignment"])
+			add_cmd_option("cluster-size", test_config.fs_specific_params["cluster-size"])
+			add_cmd_option("aligned-ops", test_config.fs_specific_params["aligned-ops"])
 		else:
 			cmd.append(self.kernel_fs_perf_path)
-			add_cmd_option("fs-type", test_config.fs)
-
-		add_cmd_option("blocked-reactor-reports-per-minute", 0)
-		add_cmd_option("device-path", test_config.device_path)
-		add_cmd_option("smp", test_config.shards_nb)
-		add_cmd_option("small-files-nb", test_config.small_files_nb)
-		add_cmd_option("big-files-nb", test_config.big_files_nb)
-		add_cmd_option("small-prob", test_config.small_prob)
-		add_cmd_option("write-prob", test_config.write_prob)
-		add_cmd_option("runs-nb", test_config.runs_nb)
-		add_cmd_option("op-nb-limit", test_config.op_nb_limit)
-		add_cmd_option("written-data-limit", test_config.written_data_limit)
-		add_cmd_option("read-data-limit", test_config.read_data_limit)
-		add_cmd_option("name", test_config.name)
-		add_cmd_option("seq-writes", test_config.seq_writes)
-		add_cmd_option_pair("small-op-size-range", test_config.small_op_size_range)
-		add_cmd_option_pair("big-op-size-range", test_config.big_op_size_range)
+			add_cmd_option("fs-type", test_config.fs_type)
+		add_cmd_option("blocked-reactor-reports-per-minute", 100000)
+		add_cmd_option("blocked-reactor-notify-ms", 10)
 		add_cmd_option("json-output", json_output)
 		cmd.append("--no-stdout")
+
+		for (param_key, param_val) in test_config.basic_params.items():
+			add_cmd_option(param_key, param_val)
+
+		for (param_key, param_val) in self.common_params.items():
+			add_cmd_option(param_key, param_val)
 
 		ret_code = subprocess.call(cmd)
 		if ret_code:
@@ -144,13 +128,73 @@ class TestRunner:
 			result_json = json.load(out_file)
 
 		test_res_map = result_json["results"]["example"]
-		res = Result(float(test_res_map["median"]), float(test_res_map["mad"]), float(test_res_map["min"]), float(test_res_map["max"]))
-		return TestResult(test_config, res)
+		res = Results(float(test_res_map["median"]), float(test_res_map["mad"]), float(test_res_map["min"]), float(test_res_map["max"]))
+		return TestResults(test_config, res)
 
+	def get_configs_left(self):
+		return len(self.configs)
+
+	def get_common_tester_params(self):
+		return self.common_tester_params
+
+	def get_common_params(self):
+		return self.common_params
 
 	def start_tests(self):
 		for test_config in self._iterate_configs():
 			yield self._execute_test(test_config)
+
+@dataclass
+class LineInfo:
+	info : dict
+	xs : list
+	ys : list
+
+def prepare_lines(test_results, plot_x_axis_aggregator):
+	if len(test_results) == 0:
+		return []
+
+	@dataclass
+	class TestInfo:
+		info : dict
+		results : Results
+	tests_info = [TestInfo(dict({"fs": test_result.config.fs_type},
+		**test_result.config.basic_params,
+		**test_result.config.fs_specific_params), test_result.results) for test_result in test_results]
+
+	@dataclass
+	class PointInfo:
+		info : list
+		x : float
+		y : float
+	points = [PointInfo([], test_info.info[plot_x_axis_aggregator], 0.0) for test_info in tests_info]
+
+	common = []
+	for key in tests_info[0].info.keys():
+		if key == plot_x_axis_aggregator or all([tests_info[0].info[key] == test_info.info.get(key) for test_info in tests_info]):
+			common.append(key)
+
+	for key in common:
+		for test_info in tests_info:
+			del test_info.info[key]
+
+	for test_info, point in zip(tests_info, points):
+		point.y = test_info.results.median
+		point.info = list(test_info.info.items())
+
+	points = sorted(points, key=lambda point: point.info)
+
+	lines = []
+	prev_point_info = None
+	for point in points:
+		if point.info == prev_point_info:
+			lines[-1].xs.append(point.x)
+			lines[-1].ys.append(point.y)
+		else:
+			lines.append(LineInfo(point.info, [point.x], [point.y]))
+			prev_point_info = point.info
+
+	return lines
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
@@ -159,5 +203,12 @@ if __name__ == "__main__":
 	parser.add_argument("kernel_fs_perf", help="Path to kernel_fs_perf", type=str)
 	args = parser.parse_args()
 	runner = TestRunner(args.config, args.sfs_perf, args.kernel_fs_perf)
-	for test_result in runner.start_tests():
-		print(test_result.results)
+	while runner.get_configs_left() > 0:
+		test_results = []
+		plot_x_axis_aggregator = runner.get_common_tester_params()["plot-param"]
+		common_params = runner.get_common_params()
+		for test_result in runner.start_tests():
+			test_results.append(test_result)
+		lines = prepare_lines(test_results, plot_x_axis_aggregator)
+		for line in lines:
+			print(line)

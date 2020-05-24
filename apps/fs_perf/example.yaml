@@ -1,23 +1,24 @@
 - name: example
-  fs: ["SFS", "EXT4", "XFS"]
-  device_path: /dev/sda
-  runs_nb: 100
-  shards_nb: [5, 1, 12]
-  files_info:
-    small_files_nb: [1, 2, 4, 8, 16, 1024]
-    big_files_nb: [1, 2, 4, 8, 16]
+  fs: [SFS, EXT4, XFS]
+  device-path: /dev/sda
+  runs-nb: 100
+  smp: [5, 1, 12]
+  files-info:
+    small-files-nb: [1, 2, 4, 8, 16, 1024]
+    big-files-nb: [1, 2, 4, 8, 16]
   probabilities:
-    small_prob: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
-    write_prob: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
-  operations_info:
+    small-prob: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+    write-prob: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+  operations-info:
     limits:
-      written_data_limit: 400MB
-      read_data_limit: 400MB
-      op_nb_limit: 10000
-    aligned: [false, true]
-    small_op_size_range: [[0MB, 1023KB], [1023KB, 1023KB]]
-    big_op_size_range: [[1MB, 20MB], [1MB, 1MB], [10MB, 10MB]]
-  sfs_config:
-    alignment: [4KB, 16KB]
-    cluster_size: [1MB, 8MB, 32MB]
-    aligned_ops: [false, true]
+      written-data-limit: 400M
+      read-data-limit: 400M
+      op-nb-limit: 10000
+    seq-writes: [false, true]
+    small-op-size-range: [[0M, 1023k], [1023k, 1023k]]
+    big-op-size-range: [[1M, 20M], [1M, 1M], [10M, 10M]]
+  sfs-config:
+    alignment: [4k, 16k]
+    cluster-size: [1M, 8M, 32M]
+    aligned-ops: [false, true]
+  plot-param: write-prob
