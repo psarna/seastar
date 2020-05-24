@@ -269,10 +269,14 @@ future<bootstrap_record> make_bootstrap_record(uint64_t version, unit_size_t ali
 
 future<size_t> write_zero_cluster(block_device& device, unit_size_t alignment, unit_size_t cluster_size,
         disk_offset_t offset) {
-    return do_with(allocate_aligned_buffer<uint8_t>(cluster_size, alignment),
-            [&device, cluster_size, offset] (auto& buf) {
-        std::fill(buf.get(), buf.get() + cluster_size, 0);
-        return device.write(offset, buf.get(), cluster_size);
+    return async([&, alignment, cluster_size, offset] {
+        auto buf = allocate_aligned_buffer<uint8_t>(cluster_size, alignment);
+        for (size_t i = 0; i < cluster_size; ++i) {
+            thread::maybe_yield();
+            buf[i] = 0;
+        }
+        auto written = device.write(offset, buf.get(), cluster_size).get0();
+        return written;
     });
 }
 
