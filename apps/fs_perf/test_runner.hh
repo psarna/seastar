@@ -26,12 +26,14 @@
 #include <algorithm>
 #include <boost/range/adaptors.hpp>
 #include <chrono>
+#include <exception>
 #include <memory>
 #include <seastar/core/future-util.hh>
 #include <seastar/core/future.hh>
 #include <seastar/core/sharded.hh>
 #include <seastar/fs/filesystem.hh>
 #include <seastar/util/defer.hh>
+#include <iostream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -51,17 +53,22 @@ namespace internal {
 
 template<typename RunTester, typename RunConfig>
 seastar::future<double> measure_run_time(seastar::sharded<RunTester>& tester, RunConfig& rconf) {
-    double ms = seastar::later().then([&] {
-        using clock_type = std::chrono::steady_clock;
-        clock_type::time_point start_time = clock_type::now();
-        return tester.invoke_on_all([](RunTester& local_env) {
-            return local_env.run();
-        }).then([start_time = std::move(start_time)] {
-            auto end_time = clock_type::now();
-            return std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
-        });
-    }).get0();
-    return seastar::make_ready_future<double>(ms);
+    try {
+        double ms = seastar::later().then([&] {
+            using clock_type = std::chrono::steady_clock;
+            clock_type::time_point start_time = clock_type::now();
+            return tester.invoke_on_all([](RunTester& local_env) {
+                return local_env.run();
+            }).then([start_time = std::move(start_time)] {
+                auto end_time = clock_type::now();
+                return std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+            });
+        }).get0();
+        return seastar::make_ready_future<double>(ms);
+    } catch (...) {
+        std::cerr << "Exception occurred during run: " << std::current_exception() << std::endl;
+        throw;
+    }
 }
 
 template<typename RunTester, typename RunConfig>
@@ -73,12 +80,18 @@ seastar::future<double> start_run(const sfs_config& fsconf, const RunConfig& rco
 
     seastar::sharded<RunTester> tester;
     tester.start(std::ref(fs), rconf).get();
-    tester.invoke_on_all([](RunTester& local_env) {
-        return local_env.init();
-    }).get();
     auto stop_tester = seastar::defer([&tester] {
         tester.stop().get();
     });
+
+    try {
+        tester.invoke_on_all([](RunTester& local_env) {
+            return local_env.init();
+        }).get();
+    } catch (...) {
+        std::cerr << "Exception occurred during run init: " << std::current_exception() << std::endl;
+        throw;
+    }
 
     return measure_run_time(tester, rconf);
 }
@@ -91,12 +104,18 @@ seastar::future<double> start_run(const default_config& fsconf, const RunConfig&
 
     seastar::sharded<RunTester> tester;
     tester.start(mount_point, rconf).get();
-    tester.invoke_on_all([](RunTester& local_env) {
-        return local_env.init();
-    }).get();
     auto stop_tester = seastar::defer([&tester] {
         tester.stop().get();
     });
+
+    try {
+        tester.invoke_on_all([](RunTester& local_env) {
+            return local_env.init();
+        }).get();
+    } catch (...) {
+        std::cerr << "Exception occurred during run init: " << std::current_exception() << std::endl;
+        throw;
+    }
 
     return measure_run_time(tester, rconf);
 }
