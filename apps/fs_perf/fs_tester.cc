@@ -176,7 +176,10 @@ void fs_tester::setup_generators() {
                 round_down_to_multiple_of_power_of_2(max_size, _rcfg.alignment)) :
                 temporary_buffer<uint8_t>(max_size);
         auto dist = std::uniform_int_distribution<uint8_t>();
-        std::generate_n(ret.get_write(), ret.size(), [&] { return dist(_random_engine); });
+        std::generate_n(ret.get_write(), ret.size(), [&] {
+            thread::maybe_yield();
+            return dist(_random_engine);
+        });
         return ret;
     }();
 }
