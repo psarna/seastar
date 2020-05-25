@@ -105,9 +105,6 @@ class TestRunner:
 
 		if test_config.fs_type == "SFS":
 			cmd.append(self.sfs_perf_path)
-			add_cmd_option("alignment", test_config.fs_specific_params["alignment"])
-			add_cmd_option("cluster-size", test_config.fs_specific_params["cluster-size"])
-			add_cmd_option("aligned-ops", test_config.fs_specific_params["aligned-ops"])
 		else:
 			cmd.append(self.kernel_fs_perf_path)
 			add_cmd_option("fs-type", test_config.fs_type)
@@ -115,6 +112,9 @@ class TestRunner:
 		add_cmd_option("blocked-reactor-notify-ms", 10)
 		add_cmd_option("json-output", json_output)
 		cmd.append("--no-stdout")
+
+		for (param_key, param_val) in test_config.fs_specific_params.items():
+			add_cmd_option(param_key, param_val)
 
 		for (param_key, param_val) in test_config.basic_params.items():
 			add_cmd_option(param_key, param_val)
