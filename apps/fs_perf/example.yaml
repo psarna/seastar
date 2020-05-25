@@ -1,6 +1,6 @@
 - name: example
   fs: [SFS, EXT4, XFS]
-  device-path: /dev/sda
+  device-path: /dev/sdX
   runs-nb: 100
   smp: [5, 1, 12]
   files-info:
