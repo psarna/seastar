@@ -32,6 +32,7 @@
 #include <seastar/core/future.hh>
 #include <seastar/core/sharded.hh>
 #include <seastar/fs/filesystem.hh>
+#include <seastar/fs/temporary_directory.hh>
 #include <seastar/util/defer.hh>
 #include <iostream>
 #include <string>
@@ -99,11 +100,12 @@ seastar::future<double> start_run(const sfs_config& fsconf, const RunConfig& rco
 template<typename RunTester, typename RunConfig>
 seastar::future<double> start_run(const default_config& fsconf, const RunConfig& rconf) {
     mkfs(fsconf.device_path, fsconf.fs_type);
-    std::string mount_point = mount(fsconf.device_path);
-    auto unmount_fs = seastar::defer([&] { unmount(fsconf.device_path); });
+    seastar::fs::temporary_directory mount_point("/tmp/.fs_perf");
+    mount(fsconf.device_path, mount_point.path());
+    auto unmount_fs = seastar::defer([&] { unmount(mount_point.path()); });
 
     seastar::sharded<RunTester> tester;
-    tester.start(mount_point, rconf).get();
+    tester.start(mount_point.path(), rconf).get();
     auto stop_tester = seastar::defer([&tester] {
         tester.stop().get();
     });

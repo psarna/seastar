@@ -32,11 +32,11 @@ seastar::logger mlogger("filesystem_mgmt");
 
 namespace bp = boost::process;
 
-void unmount(const std::string& device_path) {
+void unmount(const std::string& mount_point) {
     try {
-        bp::system(fmt::format("udisksctl unmount -b {}", device_path), bp::std_out > bp::null, bp::std_err > bp::null);
+        bp::system(fmt::format("umount {}", mount_point), bp::std_out > bp::null, bp::std_err > bp::null);
     } catch (...) {
-        mlogger.warn("Error while unmounting {}", device_path);
+        mlogger.warn("Error while unmounting {}", mount_point);
     }
 }
 
@@ -69,15 +69,8 @@ void mkfs(const std::string& device_path, filesystem_type fs_type) {
     __builtin_unreachable();
 }
 
-std::string mount(const std::string& device_path) {
-    unmount(device_path);
-    bp::ipstream out;
-    bp::system(fmt::format("udisksctl mount -b {}", device_path), bp::std_out > out);
-    std::string txt;
-    out >> txt;
-    if (txt != "Mounted") {
-        throw std::runtime_error(fmt::format("Couldn't mount {} - {}", device_path, txt));
+void mount(const std::string& device_path, const std::string& mount_point) {
+    if (bp::system(fmt::format("sudo mount {} {}", device_path, mount_point), bp::std_out > bp::null, bp::std_err > bp::null)) {
+        throw std::runtime_error(fmt::format("Couldn't mount {} at {}", device_path, mount_point));
     }
-    out >> txt >> txt >> txt;
-    return txt.substr(0, txt.size() - 1);
 }

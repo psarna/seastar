@@ -29,5 +29,5 @@ enum class filesystem_type {
 };
 
 void mkfs(const std::string& device_path, filesystem_type fs_type);
-std::string mount(const std::string& device_path);
-void unmount(const std::string& device_path);
+void mount(const std::string& device_path, const std::string& mount_point);
+void unmount(const std::string& mount_point);
