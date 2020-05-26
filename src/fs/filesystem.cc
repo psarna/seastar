@@ -236,7 +236,7 @@ cluster_range which_cluster_bucket(cluster_range available_clusters, uint32_t sh
 
 future<> distribute_clusters(cluster_range available_clusters, shard_info_vec& shards_info) {
     const auto all_shards = boost::irange<uint32_t>(0, shards_info.size());
-    return parallel_for_each(std::move(all_shards), [available_clusters, &shards_info](uint32_t shard_id) {
+    return parallel_for_each(all_shards, [available_clusters, &shards_info](uint32_t shard_id) {
         const cluster_range bucket = which_cluster_bucket(available_clusters, shards_info.size(), shard_id);
         shards_info[shard_id] = { bucket.beg, bucket };
         return make_ready_future();
@@ -285,8 +285,8 @@ future<> bootfs(sharded<filesystem>& fs, std::string device_path) {
         fs.start().get();
 
         /* Each shard should have own version of shared_root */
-        parallel_for_each(smp::all_cpus(), [&fs, device_path, root] (shard_id id) {
-            return fs.invoke_on(id, [device_path = std::move(device_path), root = make_foreign(root)](filesystem& f) mutable {
+        parallel_for_each(smp::all_cpus(), [&fs, device_path = std::move(device_path), root] (shard_id id) mutable {
+            return fs.invoke_on(id, [device_path, root = make_foreign(root)](filesystem& f) mutable {
                 return f.start(std::move(device_path), std::move(root));
             });
         }).get();
