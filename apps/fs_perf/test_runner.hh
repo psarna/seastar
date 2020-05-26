@@ -27,6 +27,7 @@
 #include <boost/range/adaptors.hpp>
 #include <chrono>
 #include <exception>
+#include <iostream>
 #include <memory>
 #include <seastar/core/future-util.hh>
 #include <seastar/core/future.hh>
@@ -34,7 +35,6 @@
 #include <seastar/fs/filesystem.hh>
 #include <seastar/fs/temporary_directory.hh>
 #include <seastar/util/defer.hh>
-#include <iostream>
 #include <string>
 #include <utility>
 #include <vector>

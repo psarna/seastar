@@ -20,10 +20,10 @@
  */
 
 #include "conversions.hh"
-#include "fs_tester.hh"
 #include "filesystem_mgmt.hh"
-#include "test_runner.hh"
+#include "fs_tester.hh"
 #include "results_printers.hh"
+#include "test_runner.hh"
 
 #include <cassert>
 #include <fmt/format.h>

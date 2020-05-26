@@ -31,7 +31,6 @@
 #include <seastar/core/temporary_buffer.hh>
 #include <utility>
 #include <vector>
-#include <vector>
 
 struct run_config {
     size_t small_files_nb;
