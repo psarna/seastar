@@ -192,13 +192,11 @@ private:
                             // TODO: maybe we should return partial write instead of exception?
                             return make_exception_future<bool_class<stop_iteration_tag>>(no_more_space_exception());
                         }
-                        auto finished_cluster_offset = _metadata_log._curr_data_writer->current_disk_offset();
+                        auto finished_cluster_offset = _metadata_log._curr_data_writer->initial_disk_offset();
                         auto finished_cluster_id = offset_to_cluster_id(finished_cluster_offset, _metadata_log._cluster_size);
-                        if (buff_bytes_left == 0) {
-                            // Our disk_offset is pointing at the start of the next cluster
-                            --finished_cluster_id;
+                        if (_metadata_log._curr_data_writer->get_use_counter() == 0) {
+                            _metadata_log.finish_writing_data_cluster(finished_cluster_id);
                         }
-                        _metadata_log.finish_writing_data_cluster(finished_cluster_id);
 
                         auto cluster_id = cluster_opt.value();
                         disk_offset_t cluster_disk_offset = cluster_id_to_offset(cluster_id, _metadata_log._cluster_size);
@@ -232,16 +230,17 @@ private:
     }
 
     future<size_t> do_medium_write(const uint8_t* aligned_buffer, size_t aligned_expected_write_len, file_offset_t file_offset,
-            shared_ptr<cluster_writer> disk_buffer) {
+            shared_ptr<cluster_writer> data_writer) {
         assert(reinterpret_cast<uintptr_t>(aligned_buffer) % _metadata_log._alignment == 0);
         assert(aligned_expected_write_len % _metadata_log._alignment == 0);
-        assert(disk_buffer->bytes_left() >= aligned_expected_write_len);
+        assert(data_writer->bytes_left() >= aligned_expected_write_len);
 
         _metadata_log.throw_if_read_only_fs();
 
-        disk_offset_t device_offset = disk_buffer->current_disk_offset();
-        return disk_buffer->write(aligned_buffer, aligned_expected_write_len, _metadata_log._device).then(
-                [this, file_offset, disk_buffer = std::move(disk_buffer), device_offset](size_t write_len) {
+        disk_offset_t device_offset = data_writer->current_disk_offset();
+        data_writer->change_use_counter(1);
+        return data_writer->write(aligned_buffer, aligned_expected_write_len, _metadata_log._device).then(
+                [this, file_offset, data_writer, device_offset](size_t write_len) {
             // TODO: is this round down necessary?
             // On partial write return aligned write length
             write_len = round_down_to_multiple_of_power_of_2(write_len, _metadata_log._alignment);
@@ -266,6 +265,13 @@ private:
                 return make_ready_future<size_t>(write_len);
             }
             __builtin_unreachable();
+        }).finally([this, data_writer] {
+            data_writer->change_use_counter(-1);
+            if (data_writer->get_use_counter() == 0 && _metadata_log._curr_data_writer->initial_disk_offset() !=
+                    data_writer->initial_disk_offset()) {
+                _metadata_log.finish_writing_data_cluster(
+                        offset_to_cluster_id(data_writer->initial_disk_offset(), _metadata_log._cluster_size));
+            }
         });
     }
 
