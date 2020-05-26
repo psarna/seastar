@@ -113,6 +113,7 @@ future<> metadata_log_bootstrap::bootstrap(cluster_id_t first_metadata_cluster_i
             return make_exception_future(no_more_space_exception());
         }
         cluster_id_t datalog_cluster_id = free_clusters.front();
+        _taken_clusters.emplace(datalog_cluster_id);
         free_clusters.pop_front();
 
         _metadata_log._curr_data_writer = _metadata_log._curr_data_writer->virtual_constructor();
