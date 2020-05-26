@@ -131,4 +131,9 @@ seastarfs_file_impl::throw_if_file_closed() {
     }
 }
 
+future<file>
+make_file(foreign_ptr<shared_ptr<metadata_log>> log, inode_t inode, open_flags flags) {
+    return make_ready_future<file>(make_shared<seastarfs_file_impl>(make_file_handle_impl(std::move(log), inode), flags));
+}
+
 }

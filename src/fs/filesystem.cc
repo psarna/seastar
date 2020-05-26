@@ -158,20 +158,21 @@ future<> filesystem::create_directory(std::string path) {
 }
 
 future<file> filesystem::create_and_open_file(std::string name, open_flags flags) {
-    return create_and_open_file_handler(std::move(name), this_shard_id()).then(
-            [flags](shared_file_handle file_handle) {
-        return make_ready_future<file>(file(make_shared<seastarfs_file_impl>(std::move(file_handle), flags)));
+    return create_and_open_file_handler(std::move(name)).then(
+            [flags](stub_file_handle fh) {
+        return make_file(std::move(fh.log), fh.inode, flags);
     });
 }
 
-future<shared_file_handle> filesystem::create_and_open_inode(std::string path, unsigned caller_id) {
+future<stub_file_handle> filesystem::create_and_open_inode(std::string path) {
     return _metadata_log->create_and_open_file(std::move(path), file_permissions::default_file_permissions).then(
-            [this, caller_id](inode_t inode) {
-        return make_seastarfs_file_handle_impl(_metadata_log, inode, caller_id);
+            [this](inode_t inode) {
+        stub_file_handle fh = { make_foreign<shared_ptr<metadata_log>> (_metadata_log), inode };
+        return make_ready_future<stub_file_handle>(std::move(fh));
     });
 }
 
-future<shared_file_handle> filesystem::create_and_open_file_handler(std::string path, unsigned caller_id) {
+future<stub_file_handle> filesystem::create_and_open_file_handler(std::string path) {
     throw_if_empty(path);
     throw_if_root(path);
     throw_if_not_absolute(path);
@@ -181,7 +182,7 @@ future<shared_file_handle> filesystem::create_and_open_file_handler(std::string 
     }
 
     /* TODO: reduce copy-paste */
-    const auto entry = path::root_entry(path);
+    auto entry = path::root_entry(path);
     const bool is_entry = path::is_root_entry(path);
     const bool in_cache = _cache_root.find(entry) != _cache_root.end();
 
@@ -189,26 +190,26 @@ future<shared_file_handle> filesystem::create_and_open_file_handler(std::string 
         // TODO: with_exclusive
         /* TODO: add a read-write lock to synchronize operations on the current shard. */
         return _foreign_root.try_add_entry(entry).then(
-                [this, entry = std::move(entry), path = std::move(path), caller_id](bool result) {
+                [this, entry = std::move(entry), path = std::move(path)](bool result) mutable {
             if (!result) {
                 throw std::runtime_error("cannot add entry");
             }
-            return create_and_open_inode(std::move(path), caller_id).handle_exception(
-                [this, path = std::move(path), entry = std::move(entry)] (auto exception) mutable {
+            return create_and_open_inode(path).handle_exception(
+                [this, path = std::move(path), entry = std::move(entry)](auto exception) mutable {
                 _cache_root.erase(entry);
                 return _foreign_root.remove_entry(std::move(path)).then([e = std::move(exception)] {
-                    return make_exception_future<shared_file_handle>(e);
+                    return make_exception_future<stub_file_handle>(e);
                 });
             });
         });
     } else if (!is_entry && in_cache) {
         const auto entry_owner_id = _cache_root[entry];
         if (entry_owner_id == this_shard_id()) {
-            return create_and_open_inode(std::move(path), caller_id);
+            return create_and_open_inode(std::move(path));
         }
 
         /* TODO change to lambda */
-        return container().invoke_on(entry_owner_id, &filesystem::create_and_open_file_handler, std::move(path), caller_id);
+        return container().invoke_on(entry_owner_id, &filesystem::create_and_open_file_handler, std::move(path));
     }
 
     throw std::runtime_error("cannot add entry, try later");

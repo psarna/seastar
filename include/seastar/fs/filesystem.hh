@@ -70,8 +70,8 @@ public:
 
     future<> stop();
 private:
-    future<shared_file_handle> create_and_open_file_handler(std::string name, unsigned caller_id);
-    future<shared_file_handle> create_and_open_inode(std::string path, unsigned caller_id);
+    future<stub_file_handle> create_and_open_file_handler(std::string name);
+    future<stub_file_handle> create_and_open_inode(std::string path);
 };
 
 future<> bootfs(sharded<filesystem>& fs, std::string device_path);
