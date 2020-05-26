@@ -49,7 +49,6 @@
 #include "ascii.hh"
 #include "memcached.hh"
 #include <unistd.h>
-#include <seastar/fs/filesystem.hh>
 
 #define PLATFORM "seastar"
 #define VERSION "v1.0"
