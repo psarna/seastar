@@ -76,7 +76,7 @@ SEASTAR_THREAD_TEST_CASE(local_shard_parallel_read_write_test) {
 
     {
         sharded<filesystem> fs;
-        fs::bootfs(fs, tf.path()).get();
+        fs::bootfs(fs, tf.path(), -1, 0).get();
         auto stop_fs = defer([&fs] { fs.stop().get(); });
 
         file f = fs.local().create_and_open_file("/" + filename, open_flags::rw).get0();
@@ -88,7 +88,7 @@ SEASTAR_THREAD_TEST_CASE(local_shard_parallel_read_write_test) {
     }
     {
         sharded<filesystem> fs;
-        fs::bootfs(fs, tf.path()).get();
+        fs::bootfs(fs, tf.path(), -1, 0).get();
         auto stop_fs = defer([&fs] { fs.stop().get(); });
 
         auto entries = fs.local().local_root().get0();
@@ -106,7 +106,7 @@ SEASTAR_THREAD_TEST_CASE(foreign_shard_basic_read_write_test) {
 
     {
         sharded<filesystem> fs;
-        fs::bootfs(fs, tf.path()).get();
+        fs::bootfs(fs, tf.path(), -1, 0).get();
         auto stop_fs = defer([&fs] { fs.stop().get(); });
 
         fs.local().create_directory("/" + directory).get();
@@ -123,7 +123,7 @@ SEASTAR_THREAD_TEST_CASE(foreign_shard_basic_read_write_test) {
     }
     {
         sharded<filesystem> fs;
-        fs::bootfs(fs, tf.path()).get();
+        fs::bootfs(fs, tf.path(), -1, 0).get();
         auto stop_fs = defer([&fs] { fs.stop().get(); });
 
         auto entries = fs.local().local_root().get0();
@@ -140,7 +140,7 @@ SEASTAR_THREAD_TEST_CASE(valid_basic_create_directory_test) {
 
     {
         sharded<filesystem> fs;
-        fs::bootfs(fs, tf.path()).get();
+        fs::bootfs(fs, tf.path(), -1, 0).get();
         auto stop_fs = defer([&fs] { fs.stop().get(); });
 
         fs.invoke_on(smp::count - 1, &filesystem::create_directory, "/test").get();
@@ -155,7 +155,7 @@ SEASTAR_THREAD_TEST_CASE(valid_basic_create_directory_test) {
 
     {
         sharded<filesystem> fs;
-        fs::bootfs(fs, tf.path()).get();
+        fs::bootfs(fs, tf.path(), -1, 0).get();
         auto stop_fs = defer([&fs] { fs.stop().get(); });
 
         const shared_entries entries = fs.local().global_root().get0();
@@ -171,7 +171,7 @@ SEASTAR_THREAD_TEST_CASE(valid_parallel_create_directory_test) {
 
     {
         sharded<filesystem> fs;
-        fs::bootfs(fs, tf.path()).get();
+        fs::bootfs(fs, tf.path(), -1, 0).get();
         auto stop_fs = defer([&fs] { fs.stop().get(); });
 
         fs.invoke_on_all([](filesystem& fs) mutable {
@@ -191,7 +191,7 @@ SEASTAR_THREAD_TEST_CASE(valid_basic_create_file_test) {
 
     {
         sharded<filesystem> fs;
-        fs::bootfs(fs, tf.path()).get();
+        fs::bootfs(fs, tf.path(), -1, 0).get();
         auto stop_fs = defer([&fs] { fs.stop().get(); });
 
         file f = fs.local().create_and_open_file("/test", {}).get0();
@@ -205,7 +205,7 @@ SEASTAR_THREAD_TEST_CASE(valid_basic_create_file_test) {
 
     {
         sharded<filesystem> fs;
-        fs::bootfs(fs, tf.path()).get();
+        fs::bootfs(fs, tf.path(), -1, 0).get();
         auto stop_fs = defer([&fs] { fs.stop().get(); });
 
         const shared_entries entries = fs.local().global_root().get0();
