@@ -138,12 +138,15 @@ void metadata_log::cut_out_data_range(inode_info::file& file, file_range range) 
                 _compacted_log_size -= (former.data_range.size() == _cluster_size ?
                     ondisk_entry_size<ondisk_large_write>() :
                     ondisk_entry_size<ondisk_medium_write>());
-                auto it = _data_cluster_contents_info_map.find(offset_to_cluster_id(disk_data.device_offset, _cluster_size));
+                cluster_id_t clst_id = offset_to_cluster_id(disk_data.device_offset, _cluster_size);
+                auto it = _data_cluster_contents_info_map.find(clst_id);
                 assert(it != _data_cluster_contents_info_map.end());
                 size_t pre_cut_cluster_data_size = it->second->get_up_to_date_data_size();
                 it->second->cut_data(disk_data.device_offset, former.data_range, left_remains.data_range, right_remains.data_range);
                 size_t post_cut_cluster_data_size = it->second->get_up_to_date_data_size();
-                if (pre_cut_cluster_data_size > _compactness * _cluster_size && post_cut_cluster_data_size <= _compactness * _cluster_size) {
+                if (_read_only_data_clusters.find(clst_id) != _read_only_data_clusters.end() &&
+                        pre_cut_cluster_data_size > _compactness * _cluster_size &&
+                        post_cut_cluster_data_size <= _compactness * _cluster_size) {
                     add_cluster_to_compact(it->first, post_cut_cluster_data_size);
                 }
             },
@@ -355,10 +358,15 @@ void metadata_log::free_writable_data_cluster(cluster_id_t cluster_id) noexcept 
 }
 
 void metadata_log::add_cluster_to_compact(cluster_id_t cluster_id, size_t size) {
+    // To add any cluster to compact only once, we add it the first time it becomes suitable - either
+    // when it's read-only and enough data becomes out-of-date or when it's already containing little data and it becomes read-only
     if (size == 0) {
+        mlogger.info("Immediately compacting empty cluster {}", cluster_id);
         schedule_background_task([this, cluster_id] {return compact_data_clusters(std::vector<cluster_id_t>{cluster_id});});
     } else {
+        mlogger.info("Adding data cluster {} to compaction", cluster_id);
         if ((_compaction_ready_data_clusters.size() + 1) * _compactness * _cluster_size > _max_data_compaction_memory) {
+            mlogger.info("Running compaction on clusters {}", _compaction_ready_data_clusters);
             std::vector<cluster_id_t> move_vec = {};
             _compaction_ready_data_clusters.swap(move_vec);
             schedule_background_task([this, move_vec = std::move(move_vec)] {return compact_data_clusters(std::move(move_vec));});
