@@ -39,6 +39,7 @@ protected:
     unit_size_t _alignment = 0;
     disk_offset_t _cluster_beg_offset = 0;
     size_t _next_write_offset = 0;
+    size_t _use_cnt = 0;
 public:
     cluster_writer() = default;
 
@@ -79,6 +80,18 @@ public:
     // TODO: maybe better name for that function? Or any other method to extract that data?
     virtual disk_offset_t current_disk_offset() const noexcept {
         return _cluster_beg_offset + _next_write_offset;
+    }
+
+    disk_offset_t initial_disk_offset() const noexcept {
+        return _cluster_beg_offset;
+    }
+
+    void change_use_counter(ssize_t num) noexcept {
+        _use_cnt += num;
+    }
+
+    ssize_t get_use_counter() const noexcept {
+        return _use_cnt;
     }
 };
 
