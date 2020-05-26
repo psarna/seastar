@@ -47,7 +47,8 @@ public:
     filesystem& operator=(const filesystem&) = delete;
     filesystem(filesystem&&) = default;
 
-    future<> start(std::string device_path, foreign_ptr<lw_shared_ptr<global_shared_root>> root);
+    future<> start(std::string device_path, foreign_ptr<lw_shared_ptr<global_shared_root>> root, double compactness,
+        size_t max_data_compaction_memory);
 
     future<shared_entries> local_root();
 
@@ -74,7 +75,7 @@ private:
     future<stub_file_handle> create_and_open_inode(std::string path);
 };
 
-future<> bootfs(sharded<filesystem>& fs, std::string device_path);
+future<> bootfs(sharded<filesystem>& fs, std::string device_path, double compactness, size_t max_data_compaction_memory);
 
 future<> mkfs(std::string device_path, uint64_t version, unit_size_t cluster_size, unit_size_t alignment,
         inode_t root_directory, uint32_t shards_nb);

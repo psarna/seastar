@@ -24,7 +24,7 @@
 #include "fs/cluster.hh"
 #include "fs/inode.hh"
 #include "fs/metadata_log.hh"
-#include "fs/units.hh"
+#include "seastar/fs/units.hh"
 #include "seastar/core/do_with.hh"
 #include "seastar/core/future.hh"
 #include "seastar/core/temporary_buffer.hh"

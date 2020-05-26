@@ -24,7 +24,7 @@
 #include "fs/cluster.hh"
 #include "fs/inode.hh"
 #include "fs/inode_info.hh"
-#include "fs/units.hh"
+#include "seastar/fs/units.hh"
 #include "seastar/core/rwlock.hh"
 
 #include <map>
