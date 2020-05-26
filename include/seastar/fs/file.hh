@@ -55,4 +55,7 @@ private:
     void throw_if_file_closed();
 };
 
+future<file>
+make_file(foreign_ptr<shared_ptr<metadata_log>> log, inode_t inode, open_flags flags);
+
 }
