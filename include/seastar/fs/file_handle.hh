@@ -52,7 +52,11 @@ public:
     virtual future<> close() = 0;
 };
 
-future<shared_file_handle>
-make_seastarfs_file_handle_impl(shared_ptr<metadata_log> log, inode_t inode, unsigned caller_id);
+struct stub_file_handle {
+    foreign_ptr<shared_ptr<metadata_log>> log;
+    inode_t inode;
+};
+
+shared_file_handle make_file_handle_impl(foreign_ptr<shared_ptr<metadata_log>> log, inode_t inode);
 
 }

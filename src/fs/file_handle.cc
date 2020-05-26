@@ -68,9 +68,9 @@ public:
 class foreign_file_handle_impl : virtual public seastarfs_file_handle_impl {
     foreign_ptr<shared_ptr<metadata_log>> _log;
 public:
-    explicit foreign_file_handle_impl(shared_ptr<metadata_log> log, inode_t inode)
+    explicit foreign_file_handle_impl(foreign_ptr<shared_ptr<metadata_log>> log, inode_t inode)
         : seastarfs_file_handle_impl(inode)
-        , _log(make_foreign(std::move(log)))
+        , _log(std::move(log))
     {}
 
     ~foreign_file_handle_impl() override = default;
@@ -140,13 +140,13 @@ private:
     }
 };
 
-future<shared_file_handle>
-make_seastarfs_file_handle_impl(shared_ptr<metadata_log> log, inode_t inode, unsigned caller_id) {
-    if (caller_id == this_shard_id()) {
-        return make_ready_future<shared_file_handle>(make_shared<local_file_handle_impl>(std::move(log), inode));
+shared_file_handle
+make_file_handle_impl(foreign_ptr<shared_ptr<metadata_log>> log, inode_t inode) {
+    if (log.get_owner_shard() == this_shard_id()) {
+        return make_shared<local_file_handle_impl>(log.release(), inode);
     }
 
-    return make_ready_future<shared_file_handle>(make_shared<foreign_file_handle_impl>(std::move(log), inode));
+    return make_shared<foreign_file_handle_impl>(std::move(log), inode);
 }
 
 }
