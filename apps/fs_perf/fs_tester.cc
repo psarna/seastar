@@ -76,7 +76,7 @@ size_t fs_tester::gen_op_pos(size_t min, size_t max) {
     }
 }
 
-future<> fs_tester::do_write() {
+future<> fs_tester::do_write(size_t& total_write_len) {
     file_info* file;
     temporary_buffer<uint8_t> buff;
     if (_prob_dist(_random_engine) < _rcfg.small_prob) {
@@ -96,13 +96,14 @@ future<> fs_tester::do_write() {
         file->_size = std::max(file->_size, write_pos + buff.size());
     }
     total_write_len += buff.size();
+    total_files_size += buff.size();
 
     return file->_file.dma_write(write_pos, buff.get(), buff.size()).then([buff = std::move(buff)](size_t write_len) {
         assert(write_len == buff.size());
     });
 }
 
-future<> fs_tester::do_read() { // TODO: dont read from holes
+future<> fs_tester::do_read(size_t& total_read_len) { // TODO: dont read from holes
     file file;
     bool small_read = _prob_dist(_random_engine) < _rcfg.small_prob;
     if (small_read) {
@@ -110,7 +111,7 @@ future<> fs_tester::do_read() { // TODO: dont read from holes
     } else {
         file = _big_files[_big_files_dist(_random_engine)]._file;
     }
-    return file.size().then([this, file = std::move(file), small_read](size_t file_size) mutable {
+    return file.size().then([this, &total_read_len, file = std::move(file), small_read](size_t file_size) mutable {
         size_t size = std::min(file_size, small_read ? gen_small_op_size() : gen_big_op_size());
         total_read_len += size;
         size_t read_pos = gen_op_pos(0, file_size - size);
@@ -122,15 +123,18 @@ future<> fs_tester::do_read() { // TODO: dont read from holes
 }
 
 future<> fs_tester::run() {
-    return do_with(semaphore(_rcfg.parallelism), gate(), (size_t)0, [this] (semaphore& write_parallelism, gate& gate, size_t& iter) {
-        return do_until([this, &iter] {
+    return do_with(semaphore(_rcfg.parallelism), gate(), (size_t)0, (size_t)0, (size_t)0,
+            [this] (semaphore& write_parallelism, gate& gate, size_t& iter, size_t& total_write_len, size_t& total_read_len) {
+        return do_until([this, &total_write_len, &total_read_len, &iter] {
             return (_rcfg.written_data_limit && total_write_len >= *_rcfg.written_data_limit) ||
                     (_rcfg.read_data_limit && total_read_len >= *_rcfg.read_data_limit) ||
                     (_rcfg.op_nb_limit && iter >= _rcfg.op_nb_limit);
-        }, [this, &write_parallelism, &gate, &iter] {
-            return get_units(write_parallelism, 1).then([this, &gate] (auto units) {
+        }, [this, &total_write_len, &total_read_len, &write_parallelism, &gate, &iter] {
+            return get_units(write_parallelism, 1).then([this, &gate, &total_write_len, &total_read_len] (auto units) {
                 gate.enter();
-                future<> op_future = _prob_dist(_random_engine) < _rcfg.write_prob ? do_write() : do_read();
+                future<> op_future = _prob_dist(_random_engine) < _rcfg.write_prob ?
+                        do_write(total_write_len) :
+                        do_read(total_read_len);
                 auto tmp = op_future.finally([&gate, units = std::move(units)] {
                     gate.leave();
                 });
@@ -183,9 +187,29 @@ void fs_tester::setup_generators() {
     }();
 }
 
+void fs_tester::setup_fs_state() {
+    auto init_files = [&](std::vector<file_info>& files, auto gen_buffer) {
+        for (auto& f : files) {
+            for (size_t i = 0; i < 3; ++i) {
+                auto buff = gen_buffer();
+                f._file.dma_write(f._size, buff.get(), buff.size()).then([&](size_t write_len) {
+                    assert(write_len == buff.size());
+                }).get();
+                f._size += buff.size();
+            }
+        }
+    };
+    init_files(_small_files, [this] { return gen_small_buffer(); });
+    init_files(_big_files, [this] { return gen_big_buffer(); });
+    // TODO: we will need longer initialization because we need to measure time when compaction is active
+}
+
 future<> fs_tester::init() {
     return async([&] {
         setup_generators();
+        create_files();
+        assert(_small_files.size() == _rcfg.small_files_nb);
+        assert(_big_files.size() == _rcfg.big_files_nb);
         setup_fs_state();
     });
 }

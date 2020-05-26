@@ -53,31 +53,21 @@ public:
     }
 
 protected:
-    void setup_fs_state() override {
-        auto create_files = [&](const std::string& prefix, auto gen, size_t num) {
+    void create_files() override {
+        auto create_files = [&](const std::string& prefix, size_t num) {
             std::vector<file_info> ret;
             for (size_t i = 0; i < num; ++i) {
                 std::string filename = fmt::format("{}{}", prefix, i);
                 file file = _fs.create_and_open_file(filename, open_flags::rw).get0();
-                file_info file_info {std::move(file), 0};
-                for (size_t j = 0; j < 3; ++j) {
-                    auto buff = gen();
-                    file_info._file.dma_write(file_info._size, buff.get(), buff.size()).then([&](size_t write_len) {
-                        assert(write_len == buff.size());
-                    }).get();
-                    file_info._size += buff.size();
-                }
-                ret.emplace_back(std::move(file_info));
+                ret.push_back({std::move(file), 0});
             }
             return ret;
         };
 
         std::string shard_dir = fmt::format("/{}", this_shard_id());
         _fs.create_directory(shard_dir).get();
-        _small_files = create_files(fmt::format("{}/small_", shard_dir), [this] { return gen_small_buffer(); }, _rcfg.small_files_nb);
-        _big_files = create_files(fmt::format("{}/big_", shard_dir), [this] { return gen_big_buffer(); }, _rcfg.big_files_nb);
-        // TODO: we will need longer initialization because we need to measure time when compaction is active
-        // TODO: perform TRIM operation
+        _small_files = create_files(fmt::format("{}/small_", shard_dir), _rcfg.small_files_nb);
+        _big_files = create_files(fmt::format("{}/big_", shard_dir), _rcfg.big_files_nb);
     }
 };
 

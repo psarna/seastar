@@ -48,39 +48,20 @@ public:
     kernel_fs_tester(std::string mount_point, run_config rconf)
         : fs_tester(rconf), _mount_point(std::move(mount_point)) {}
 
-    void setup_fs_state() override {
-        auto create_files = [&](const std::string& prefix, auto gen, size_t num) {
+    void create_files() override {
+        auto create_files = [&](const std::string& prefix, size_t num) {
             std::vector<file_info> ret;
             for (size_t i = 0; i < num; ++i) {
                 std::string filename = fmt::format("{}{}", prefix, i);
                 file file = open_file_dma(filename, open_flags::rw | open_flags::create).get0();
-                file_info file_info {std::move(file), 0};
-                for (size_t j = 0; j < 3; ++j) {
-                    auto buff = gen();
-                    file_info._file.dma_write(file_info._size, buff.get(), buff.size()).then([&](size_t write_len) {
-                        assert(write_len == buff.size());
-                    }).get();
-                    file_info._size += buff.size();
-                }
-                ret.emplace_back(std::move(file_info));
+                ret.push_back({std::move(file), 0});
             }
             return ret;
         };
-        _small_files = create_files(fmt::format("{}/small_{}_", _mount_point, this_shard_id()),
-                [this] { return gen_small_buffer(); }, _rcfg.small_files_nb);
-        _big_files = create_files(fmt::format("{}/big_{}_", _mount_point, this_shard_id()),
-                [this] { return gen_big_buffer(); }, _rcfg.big_files_nb);
+        _small_files = create_files(fmt::format("{}/small_{}_", _mount_point, this_shard_id()), _rcfg.small_files_nb);
+        _big_files = create_files(fmt::format("{}/big_{}_", _mount_point, this_shard_id()), _rcfg.big_files_nb);
     }
 };
-
-filesystem_type parse_fs_type(const std::string& fs) {
-    if (fs == "xfs" || fs == "XFS") {
-        return filesystem_type::XFS;
-    } else if (fs == "ext4" || fs == "EXT4") {
-        return filesystem_type::EXT4;
-    }
-    assert(false && "invalid fs type");
-}
 
 int main(int ac, char** av) {
     app_template at;

@@ -62,8 +62,7 @@ protected:
     std::vector<file_info> _small_files;
     std::vector<file_info> _big_files;
 
-    size_t total_read_len = 0;
-    size_t total_write_len = 0;
+    size_t total_files_size = 0;
 
     std::uniform_real_distribution<double> _prob_dist;
     std::uniform_int_distribution<size_t> _small_files_dist;
@@ -95,17 +94,24 @@ public:
 
 protected:
     virtual seastar::future<> post_test_callback() { return seastar::now(); }
-    virtual seastar::future<> do_write();
-    virtual seastar::future<> do_read();
+    // total_write_len is incremented before write completes
+    seastar::future<> do_write(size_t& total_write_len);
+    // total_read_len is incremented before write completes
+    seastar::future<> do_read(size_t& total_read_len);
 
 public:
-    virtual seastar::future<> run();
+    seastar::future<> run();
 
 protected:
-    virtual void setup_generators();
-    virtual void setup_fs_state() = 0;
+    void setup_generators();
+    // Create files that will be used for testing by run() in do_write()/do_read()
+    virtual void create_files() = 0;
+    // Implementation should prepare initial state of the filesystem (files) before starting run().
+    // setup_fs_state() is used to test more realistic scenarios where filesystem isn't brand new but
+    // was used before.
+    virtual void setup_fs_state();
 
 public:
-    virtual seastar::future<> init();
-    virtual seastar::future<> stop();
+    seastar::future<> init();
+    seastar::future<> stop();
 };
