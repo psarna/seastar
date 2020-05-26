@@ -72,57 +72,65 @@ SEASTAR_THREAD_TEST_CASE(local_shard_parallel_read_write_test) {
     const auto tf = temporary_file(device_path);
     tf.truncate(device_size * 2);
     fs::mkfs(tf.path(), version, cluster_size, alignment, root_directory, 1).get();
-    static constexpr auto filename = "/abc.txt";
+    const std::string filename = "abc.txt";
 
     {
         sharded<filesystem> fs;
         fs::bootfs(fs, tf.path()).get();
         auto stop_fs = defer([&fs] { fs.stop().get(); });
 
-        file f = fs.local().create_and_open_file(filename, open_flags::rw).get0();
+        file f = fs.local().create_and_open_file("/" + filename, open_flags::rw).get0();
         auto close_file = defer([&f] { f.close().get(); });
 
         run_parallel_read_write(f, device_size, alignment).get();
 
         f.flush().get();
     }
-//    { /* TODO fix some bug in bootstrap or writes */
-//        sharded<filesystem> fs;
-//        fs::bootfs(fs, tf.path()).get();
-//        auto stop_fs = defer([&fs] { fs.stop().get(); });
-//
-//        auto entries = fs.local().local_root().get0();
-//        const unsigned shard_id = entries[filename];
-//        BOOST_REQUIRE_EQUAL(shard_id, this_shard_id());
-//        /* TODO check file size */
-//    }
+    {
+        sharded<filesystem> fs;
+        fs::bootfs(fs, tf.path()).get();
+        auto stop_fs = defer([&fs] { fs.stop().get(); });
+
+        auto entries = fs.local().local_root().get0();
+        BOOST_REQUIRE(entries.find(filename) != entries.end());
+        /* TODO check file size */
+    }
 }
 
-//SEASTAR_THREAD_TEST_CASE(foreign_shard_basic_read_write_test) {
-//    const auto tf = temporary_file(device_path);
-//    tf.truncate(device_size * smp::count * 2);
-//    fs::mkfs(tf.path(), version, cluster_size, alignment, root_directory, smp::count).get();
-//    static const std::string directory = "/test";
-//    static const std::string filename = directory + "/abc.txt";
-//
-//    {
-//        sharded<filesystem> fs;
-//        fs::bootfs(fs, tf.path()).get();
-//        auto stop_fs = defer([&fs] { fs.stop().get(); });
-//
-//        fs.local().create_directory(directory).get();
-//        smp::submit_to(smp::count - 1, [&fs] {
-//            return async([&fs] {
-//                file f = fs.local().create_and_open_file(filename, open_flags::rw).get0();
-//                auto close_file = defer([&f] { f.close().get(); });
-//
-//                run_parallel_read_write(f, device_size, alignment).get();
-//
-//                f.flush().get();
-//            });
-//        }).get();
-//    }
-//}
+SEASTAR_THREAD_TEST_CASE(foreign_shard_basic_read_write_test) {
+    const auto tf = temporary_file(device_path);
+    tf.truncate(device_size * smp::count * 2);
+    fs::mkfs(tf.path(), version, cluster_size, alignment, root_directory, smp::count).get();
+    static const std::string directory = "test";
+    static const std::string filename = "/" + directory + "/abc.txt";
+
+    {
+        sharded<filesystem> fs;
+        fs::bootfs(fs, tf.path()).get();
+        auto stop_fs = defer([&fs] { fs.stop().get(); });
+
+        fs.local().create_directory("/" + directory).get();
+        smp::submit_to(smp::count - 1, [&fs] {
+            return async([&fs] {
+                file f = fs.local().create_and_open_file(filename, open_flags::rw).get0();
+                auto close_file = defer([&f] { f.close().get(); });
+
+                run_parallel_read_write(f, device_size, alignment).get();
+
+                f.flush().get();
+            });
+        }).get();
+    }
+    {
+        sharded<filesystem> fs;
+        fs::bootfs(fs, tf.path()).get();
+        auto stop_fs = defer([&fs] { fs.stop().get(); });
+
+        auto entries = fs.local().local_root().get0();
+        BOOST_REQUIRE(entries.find(directory) != entries.end());
+        /* TODO check file size */
+    }
+}
 
 SEASTAR_THREAD_TEST_CASE(valid_basic_create_directory_test) {
     const auto tf = temporary_file(device_path);
