@@ -20,10 +20,15 @@
  */
 
 #include "fs/cluster_allocator.hh"
+#include "seastar/util/log.hh"
 
 #include <cassert>
 
 namespace seastar::fs {
+
+namespace {
+logger mlogger("fs_cluster_allocator");
+} // namespace
 
 cluster_allocator::cluster_allocator() : _cluster_sem(0) {}
 
@@ -79,7 +84,9 @@ std::optional<cluster_id_t> cluster_allocator::alloc() noexcept {
     assert(_cluster_sem.available_units() > 0);
     _cluster_sem.consume(1);
 
-    return do_alloc();
+    cluster_id_t cluster_id = do_alloc();
+    mlogger.debug("Allocating cluster: {}", cluster_id);
+    return cluster_id;
 }
 
 future<std::vector<cluster_id_t>> cluster_allocator::alloc_wait(size_t count) {
@@ -89,16 +96,19 @@ future<std::vector<cluster_id_t>> cluster_allocator::alloc_wait(size_t count) {
         for (size_t i = 0; i < count; ++i) {
             cluster_ids.emplace_back(do_alloc());
         }
+        mlogger.debug("Allocating clusters: {}", cluster_ids);
         return make_ready_future<std::vector<cluster_id_t>>(std::move(cluster_ids));
     });
 }
 
 void cluster_allocator::free(cluster_id_t cluster_id) noexcept {
+    mlogger.debug("Freeing cluster: {}", cluster_id);
     do_free(cluster_id);
     _cluster_sem.signal();
 }
 
 void cluster_allocator::free(const std::vector<cluster_id_t>& cluster_ids) noexcept {
+    mlogger.debug("Freeing clusters: {}", cluster_ids);
     for (auto& cluster_id : cluster_ids) {
         do_free(cluster_id);
     }
