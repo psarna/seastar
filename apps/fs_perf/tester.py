@@ -198,6 +198,21 @@ def prepare_lines(test_results, plot_x_axis_aggregator):
 
 	return lines
 
+def write_plot_info(plot_name, x_axis_name, y_axis_name, lines, f):
+	line_dicts = []
+	for line in lines:
+		line_dict = {}
+		line_dict["name"] = str(line.info)
+		line_dict["xs"] = line.xs
+		line_dict["ys"] = line.ys
+		line_dicts.append(line_dict)
+	plot_dict = {}
+	plot_dict["lines-info"] = line_dicts
+	plot_dict["plot-name"] = plot_name
+	plot_dict["x-axis"] = x_axis_name
+	plot_dict["y-axis"] = y_axis_name
+	yaml.dump(plot_dict, f)
+
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
 	parser.add_argument("config", help="Path to YAML config file", type=str)
@@ -214,3 +229,7 @@ if __name__ == "__main__":
 		lines = prepare_lines(test_results, plot_x_axis_aggregator)
 		for line in lines:
 			print(line)
+		os.makedirs("test_results", exist_ok=True)
+		with open(f"test_results/{common_params['name']}.yaml", "w") as out:
+			write_plot_info(common_params['name'], plot_x_axis_aggregator,
+				"time", lines, out)
