@@ -33,6 +33,7 @@
 #include <seastar/core/thread.hh>
 #include <seastar/core/units.hh>
 #include <seastar/fs/filesystem.hh>
+#include <seastar/fs/temporary_directory.hh>
 #include <seastar/fs/temporary_file.hh>
 #include <string>
 #include <utility>
@@ -131,9 +132,11 @@ int main(int ac, char** av) {
             rconf.big_op_size_range = parse_memory_range(at.configuration()["big-op-size-range"].as<std::string>());
             rconf.seq_writes = at.configuration()["seq-writes"].as<bool>();
 
+            std::unique_ptr<temporary_directory> td;
             std::unique_ptr<temporary_file> tf;
             if (at.configuration().count("device-path") == 0) {
-                tf = std::make_unique<temporary_file>("./test_files/seastarfs");
+                td = std::make_unique<temporary_directory>(".seastarfs_dir");
+                tf = std::make_unique<temporary_file>(fmt::format("{}/seastarfs_file", td->path()));
                 tf->truncate(40 * GB); // TODO: fix
                 fsconf.device_path = tf->path();
             } else {
