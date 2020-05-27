@@ -144,9 +144,8 @@ void metadata_log::cut_out_data_range(inode_info::file& file, file_range range) 
                 size_t pre_cut_cluster_data_size = it->second->get_up_to_date_data_size();
                 it->second->cut_data(disk_data.device_offset, former.data_range, left_remains.data_range, right_remains.data_range);
                 size_t post_cut_cluster_data_size = it->second->get_up_to_date_data_size();
-                if (_read_only_data_clusters.find(clst_id) != _read_only_data_clusters.end() &&
-                        pre_cut_cluster_data_size > _compactness * _cluster_size &&
-                        post_cut_cluster_data_size <= _compactness * _cluster_size) {
+                if (pre_cut_cluster_data_size > _compactness * _cluster_size && post_cut_cluster_data_size <=
+                        _compactness * _cluster_size && _read_only_data_clusters.count(it->first) == 1) {
                     add_cluster_to_compact(it->first, post_cut_cluster_data_size);
                 }
             },
@@ -256,6 +255,7 @@ void metadata_log::memory_only_disk_write(inode_t inode, file_offset_t file_offs
     auto& cc_info = cc_info_it->second;
     cc_info.add_data(disk_offset, inode, {file_offset, file_offset + write_len});
     if (created) {
+        mlogger.debug("adding cluster to writable: {}", cluster_id);
         auto [_, inserted] = _data_cluster_contents_info_map.try_emplace(cluster_id, &cc_info);
         assert(inserted);
     }
@@ -332,6 +332,7 @@ void metadata_log::memory_only_delete_dir_entry(inode_info::directory& dir, std:
 }
 
 void metadata_log::finish_writing_data_cluster(cluster_id_t cluster_id) {
+    mlogger.debug("moving cluster to read only: {}", cluster_id);
     auto nh = _writable_data_clusters.extract(cluster_id);
     assert(!nh.empty());
     auto insert_res = _read_only_data_clusters.insert(std::move(nh));
@@ -343,6 +344,7 @@ void metadata_log::finish_writing_data_cluster(cluster_id_t cluster_id) {
 }
 
 void metadata_log::make_data_cluster_writable(cluster_id_t cluster_id) {
+    mlogger.debug("moving cluster to writable: {}", cluster_id);
     auto nh = _read_only_data_clusters.extract(cluster_id);
     assert(!nh.empty());
     auto insert_res = _writable_data_clusters.insert(std::move(nh));
@@ -350,6 +352,7 @@ void metadata_log::make_data_cluster_writable(cluster_id_t cluster_id) {
 }
 
 void metadata_log::free_writable_data_cluster(cluster_id_t cluster_id) noexcept {
+    mlogger.debug("freeing cluster from writable: {}", cluster_id);
     auto num = _data_cluster_contents_info_map.erase(cluster_id);
     assert(num == 1);
     num = _writable_data_clusters.erase(cluster_id);
@@ -361,16 +364,18 @@ void metadata_log::add_cluster_to_compact(cluster_id_t cluster_id, size_t size) 
     // To add any cluster to compact only once, we add it the first time it becomes suitable - either
     // when it's read-only and enough data becomes out-of-date or when it's already containing little data and it becomes read-only
     if (size == 0) {
-        mlogger.info("Immediately compacting empty cluster {}", cluster_id);
-        schedule_background_task([this, cluster_id] {return compact_data_clusters(std::vector<cluster_id_t>{cluster_id});});
+        mlogger.debug("Starting immediate compaction: {}", cluster_id);
+        schedule_background_compaction([this, cluster_id] {return compact_data_clusters(std::vector<cluster_id_t>{cluster_id});});
     } else {
         mlogger.info("Adding data cluster {} to compaction", cluster_id);
         if ((_compaction_ready_data_clusters.size() + 1) * _compactness * _cluster_size > _max_data_compaction_memory) {
             mlogger.info("Running compaction on clusters {}", _compaction_ready_data_clusters);
             std::vector<cluster_id_t> move_vec = {};
             _compaction_ready_data_clusters.swap(move_vec);
-            schedule_background_task([this, move_vec = std::move(move_vec)] {return compact_data_clusters(std::move(move_vec));});
+            mlogger.debug("Starting group compaction: {}", move_vec);
+            schedule_background_compaction([this, move_vec = std::move(move_vec)] {return compact_data_clusters(std::move(move_vec));});
         }
+        mlogger.debug("Adding cluster to compaction group: {}", cluster_id);
         _compaction_ready_data_clusters.push_back(cluster_id);
     }
 }

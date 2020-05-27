@@ -59,6 +59,7 @@ class metadata_log {
     shared_ptr<metadata_to_disk_buffer> _curr_cluster_buff;
     shared_ptr<cluster_writer> _curr_data_writer;
     shared_future<> _background_futures = now();
+    shared_future<> _background_compactions = now();
 
     // In memory metadata
     cluster_allocator _cluster_allocator;
@@ -251,6 +252,11 @@ private:
     template<class Func>
     void schedule_background_task(Func&& task) {
         _background_futures = when_all_succeed(_background_futures.get_future(), std::forward<Func>(task));
+    }
+
+    template<class Func>
+    void schedule_background_compaction(Func&& task) {
+        _background_compactions = when_all_succeed(_background_compactions.get_future(), std::forward<Func>(task));
     }
 
     void schedule_flush_of_curr_cluster();
