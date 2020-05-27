@@ -412,7 +412,9 @@ public:
 
     // All disk-related errors will be exposed here
     future<> flush_log() {
-        return flush_curr_cluster();
+        return _background_compactions.get_future().then([this] {
+            return flush_curr_cluster();
+        });
     }
 };
 
