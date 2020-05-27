@@ -19,12 +19,12 @@
  * Copyright (C) 2020 ScyllaDB
  */
 
-#include "fs/bitwise.hh"
 #include "fs/cluster.hh"
 #include "fs/data_compaction.hh"
 #include "fs/device_reader.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_log_operations/write.hh"
+#include "seastar/fs/bitwise.hh"
 #include "seastar/fs/units.hh"
 #include "seastar/core/do_with.hh"
 #include "seastar/core/future-util.hh"

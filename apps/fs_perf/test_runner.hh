@@ -76,7 +76,7 @@ template<typename RunTester, typename RunConfig>
 seastar::future<double> start_run(const sfs_config& fsconf, const RunConfig& rconf) {
     seastar::sharded<seastar::fs::filesystem> fs;
     seastar::fs::mkfs(fsconf.device_path, 0, fsconf.cluster_size, fsconf.alignment, 0, seastar::smp::count).get();
-    seastar::fs::bootfs(fs, fsconf.device_path).get();
+    seastar::fs::bootfs(fs, fsconf.device_path, 0.5, 5 * fsconf.cluster_size).get();
     auto stop_fs = seastar::defer([&] { fs.stop().get(); });
 
     seastar::sharded<RunTester> tester;
