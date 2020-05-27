@@ -77,7 +77,7 @@ future<> data_compaction::compact() {
     auto compact_future = data_vecs.empty() ? now() : read_data_vectors(std::move(data_vecs));
 
     return compact_future.finally([this] {
-        auto metadata_log_flush = _was_metadata_log_modified ? _metadata_log.flush_log() : now();
+        auto metadata_log_flush = _was_metadata_log_modified ? _metadata_log.flush_curr_cluster() : now();
         return metadata_log_flush.then([this] {
             return parallel_for_each(_compacted_cluster_ids, [this](cluster_id_t cluster_id) {
                 auto cluster_it = _metadata_log._writable_data_clusters.find(cluster_id);
