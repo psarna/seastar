@@ -93,16 +93,20 @@ public:
         {}
 
 protected:
-    virtual seastar::future<> post_test_callback() { return seastar::now(); }
+    seastar::future<> do_truncate();
     // total_write_len is incremented before write completes
     seastar::future<> do_write(size_t& total_write_len);
     // total_read_len is incremented before write completes
     seastar::future<> do_read(size_t& total_read_len);
 
+    virtual seastar::future<> post_test_callback() { return seastar::now(); }
+
 public:
     seastar::future<> run();
 
 protected:
+    virtual size_t filesystem_size() const noexcept = 0;
+
     void setup_generators();
     // Create files that will be used for testing by run() in do_write()/do_read()
     virtual void create_files() = 0;

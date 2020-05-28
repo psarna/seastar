@@ -103,9 +103,10 @@ seastar::future<double> start_run(const default_config& fsconf, const RunConfig&
     seastar::fs::temporary_directory mount_point("/tmp/.fs_perf");
     mount(fsconf.device_path, mount_point.path());
     auto unmount_fs = seastar::defer([&] { unmount(mount_point.path()); });
+    size_t shard_space = filesystem_remaining_space(mount_point.path()) / seastar::smp::count;
 
     seastar::sharded<RunTester> tester;
-    tester.start(mount_point.path(), rconf).get();
+    tester.start(mount_point.path(), rconf, shard_space).get();
     auto stop_tester = seastar::defer([&tester] {
         tester.stop().get();
     });

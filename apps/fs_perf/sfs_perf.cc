@@ -44,16 +44,21 @@ using namespace seastar::fs;
 
 class sfs_tester : public fs_tester {
     filesystem& _fs;
+    const size_t _filesystem_size;
 
 public:
     sfs_tester(filesystem& fs, run_config rconf)
-        : fs_tester(rconf), _fs(fs) {}
+        : fs_tester(rconf), _fs(fs), _filesystem_size(_fs.remaining_space()) {}
 
     future<> post_test_callback() override {
         return _fs.flush();
     }
 
 protected:
+    size_t filesystem_size() const noexcept override {
+        return _filesystem_size;
+    }
+
     void create_files() override {
         auto create_files = [&](const std::string& prefix, size_t num) {
             std::vector<file_info> ret;

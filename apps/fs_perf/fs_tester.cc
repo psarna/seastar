@@ -76,6 +76,23 @@ size_t fs_tester::gen_op_pos(size_t min, size_t max) {
     }
 }
 
+future<> fs_tester::do_truncate() {
+    file_info* file;
+    size_t truncate_size;
+    if (_prob_dist(_random_engine) < _rcfg.small_prob) {
+        file = &_small_files[_small_files_dist(_random_engine)];
+        truncate_size = gen_small_op_size();
+    } else {
+        file = &_big_files[_big_files_dist(_random_engine)];
+        truncate_size = gen_big_op_size();
+    }
+    truncate_size = truncate_size > file->_size ? 0 : file->_size - truncate_size;
+    total_files_size -= file->_size - truncate_size;
+    file->_size = truncate_size;
+
+    return file->_file.truncate(truncate_size);
+}
+
 future<> fs_tester::do_write(size_t& total_write_len) {
     file_info* file;
     temporary_buffer<uint8_t> buff;
@@ -91,50 +108,73 @@ future<> fs_tester::do_write(size_t& total_write_len) {
     if (_rcfg.seq_writes) {
         write_pos = file->_size;
         file->_size += buff.size();
+        total_files_size += buff.size();
     } else {
         write_pos = gen_op_pos(0, file->_size);
-        file->_size = std::max(file->_size, write_pos + buff.size());
+        size_t write_end = write_pos + buff.size();
+        if (write_end > file->_size) {
+            total_files_size += write_end - file->_size;
+            file->_size = write_end;
+        }
     }
+
     total_write_len += buff.size();
-    total_files_size += buff.size();
 
     return file->_file.dma_write(write_pos, buff.get(), buff.size()).then([buff = std::move(buff)](size_t write_len) {
         assert(write_len == buff.size());
-    });
+    }); // TODO: handle no more space
 }
 
 future<> fs_tester::do_read(size_t& total_read_len) { // TODO: dont read from holes
-    file file;
-    bool small_read = _prob_dist(_random_engine) < _rcfg.small_prob;
-    if (small_read) {
-        file = _small_files[_small_files_dist(_random_engine)]._file;
+    file_info* file;
+    size_t read_size;
+    if (_prob_dist(_random_engine) < _rcfg.small_prob) {
+        file = &_small_files[_small_files_dist(_random_engine)];
+        read_size = gen_small_op_size();
     } else {
-        file = _big_files[_big_files_dist(_random_engine)]._file;
+        file = &_big_files[_big_files_dist(_random_engine)];
+        read_size = gen_big_op_size();
     }
-    return file.size().then([this, &total_read_len, file = std::move(file), small_read](size_t file_size) mutable {
-        size_t size = std::min(file_size, small_read ? gen_small_op_size() : gen_big_op_size());
-        total_read_len += size;
-        size_t read_pos = gen_op_pos(0, file_size - size);
-        auto buff = allocate_read_buffer(size);
-        return file.dma_read(read_pos, buff.get_write(), buff.size()).then([buff = std::move(buff)](size_t read_len) {
-            assert(read_len == buff.size());
-        });
+    read_size = std::min(file->_size, read_size);
+
+    total_read_len += read_size;
+    size_t read_pos = gen_op_pos(0, file->_size - read_size);
+    auto buff = allocate_read_buffer(read_size);
+    return file->_file.dma_read(read_pos, buff.get_write(), buff.size()).then([buff = std::move(buff)](size_t read_len) {
     });
 }
 
 future<> fs_tester::run() {
-    return do_with(semaphore(_rcfg.parallelism), gate(), (size_t)0, (size_t)0, (size_t)0,
-            [this] (semaphore& write_parallelism, gate& gate, size_t& iter, size_t& total_write_len, size_t& total_read_len) {
+    return do_with(semaphore(_rcfg.parallelism), gate(), (size_t)0, (size_t)0, (size_t)0, false,
+            [this] (semaphore& write_parallelism, gate& gate, size_t& iter, size_t& total_write_len,
+            size_t& total_read_len, bool& truncate_mode) {
         return do_until([this, &total_write_len, &total_read_len, &iter] {
             return (_rcfg.written_data_limit && total_write_len >= *_rcfg.written_data_limit) ||
                     (_rcfg.read_data_limit && total_read_len >= *_rcfg.read_data_limit) ||
                     (_rcfg.op_nb_limit && iter >= _rcfg.op_nb_limit);
-        }, [this, &total_write_len, &total_read_len, &write_parallelism, &gate, &iter] {
-            return get_units(write_parallelism, 1).then([this, &gate, &total_write_len, &total_read_len] (auto units) {
+        }, [this, &total_write_len, &total_read_len, &write_parallelism, &gate, &iter, &truncate_mode] {
+            return get_units(write_parallelism, 1).then(
+                    [this, &gate, &total_write_len, &total_read_len, &truncate_mode] (auto units) {
                 gate.enter();
-                future<> op_future = _prob_dist(_random_engine) < _rcfg.write_prob ?
-                        do_write(total_write_len) :
-                        do_read(total_read_len);
+                future<> op_future = now();
+                if (3 * total_files_size >= 2 * filesystem_size()) {
+                    truncate_mode = true;
+                } else if (3 * total_files_size < filesystem_size()) {
+                    truncate_mode = false;
+                }
+                if (truncate_mode) {
+                    op_future = do_truncate();
+                } else {
+                    if (_prob_dist(_random_engine) > 1) {
+                        op_future = do_truncate();
+                    } else {
+                        if (_prob_dist(_random_engine) < _rcfg.write_prob) {
+                            op_future = do_write(total_write_len);
+                        } else {
+                            op_future = do_read(total_read_len);
+                        }
+                    }
+                }
                 auto tmp = op_future.finally([&gate, units = std::move(units)] {
                     gate.leave();
                 });
@@ -197,11 +237,28 @@ void fs_tester::setup_fs_state() {
                 }).get();
                 f._size += buff.size();
             }
+            total_files_size += f._size;
         }
     };
+    // Generate some initial data for each file
     init_files(_small_files, [this] { return gen_small_buffer(); });
     init_files(_big_files, [this] { return gen_big_buffer(); });
-    // TODO: we will need longer initialization because we need to measure time when compaction is active
+
+    size_t total_write_len = 0;
+
+    // Write around 2 * filesystem-size so we won't measure time on (nearly) brand new filesystem.
+    while (total_write_len < 2 * filesystem_size()) {
+        if (3 * total_files_size >= 2 * filesystem_size()) {
+            while (3 * total_files_size > filesystem_size()) {
+                do_truncate().get();
+            }
+        }
+        if (_prob_dist(_random_engine) < 0.2) {
+            do_truncate().get();
+        } else {
+            do_write(total_write_len).get();
+        }
+    }
 }
 
 future<> fs_tester::init() {

@@ -45,10 +45,16 @@ using namespace seastar::fs;
 
 class kernel_fs_tester : public fs_tester {
     std::string _mount_point;
+    const size_t _filesystem_size;
 
 public:
-    kernel_fs_tester(std::string mount_point, run_config rconf)
-        : fs_tester(rconf), _mount_point(std::move(mount_point)) {}
+    kernel_fs_tester(std::string mount_point, run_config rconf, size_t filesystem_size)
+        : fs_tester(rconf), _mount_point(std::move(mount_point)), _filesystem_size(filesystem_size) {}
+
+protected:
+    size_t filesystem_size() const noexcept override {
+        return _filesystem_size;
+    }
 
     void create_files() override {
         auto create_files = [&](const std::string& prefix, size_t num) {
