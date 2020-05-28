@@ -151,6 +151,7 @@ seastar::future<> start_test(const std::string& name, size_t runs_nb, const FsCo
         const std::vector<std::unique_ptr<result_printer>>& result_printers) {
     std::vector<double> results(runs_nb);
     for (size_t i = 0; i < runs_nb; ++i) {
+        std::cerr << "Starting run " << i + 1 << std::endl;
         ::internal::start_run<RunTester>(fsconf, rconf).then([&](double ms) {
             results[i] = ms;
         }).get();
