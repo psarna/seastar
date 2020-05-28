@@ -93,6 +93,8 @@ int main(int ac, char** av) {
             ("read-data-limit", bpo::value<std::string>(), "Max read data size, default: no limit")
             ("alignment", bpo::value<std::string>()->default_value("4k"), "Alignment for reads and writes used by filesystem")
             ("cluster-size", bpo::value<std::string>()->default_value("1M"), "Size of clusters in filesystem")
+            ("compactness", bpo::value<double>()->default_value(0), "Compactness used by compaction")
+            ("compaction-max-memory-size", bpo::value<std::string>()->default_value("0"), "Max memory used for compaction")
             ("small-op-size-range", bpo::value<std::string>()->default_value("0,128k"), "Range of sizes for small operations")
             ("big-op-size-range", bpo::value<std::string>()->default_value("10M,20M"), "Range of sizes for big operations")
             ("seq-writes", bpo::value<bool>()->default_value(true), "Only sequential writes (at the end of files)")
@@ -130,6 +132,8 @@ int main(int ac, char** av) {
             rconf.alignment = parse_memory_size(at.configuration()["alignment"].as<std::string>());
             fsconf.alignment = rconf.alignment;
             fsconf.cluster_size = parse_memory_size(at.configuration()["cluster-size"].as<std::string>());
+            fsconf.compactness = at.configuration()["compactness"].as<double>();
+            fsconf.compaction_max_memory_size = parse_memory_size(at.configuration()["cluster-size"].as<std::string>());
             rconf.aligned_ops = at.configuration()["aligned-ops"].as<bool>();
             rconf.parallelism = at.configuration()["parallelism"].as<size_t>();
             assert(rconf.parallelism > 0);

@@ -22,4 +22,7 @@
     alignment: [4k, 16k]
     cluster-size: [1M, 8M, 32M]
     aligned-ops: [false, true]
+    compaction:
+      compactness: [0.5, 0.3, 0]
+      compaction-max-memory-size: [256M]
   plot-param: write-prob

@@ -80,11 +80,15 @@ class TestRunner:
 			if test_config.fs_type == "SFS":
 				iter_sfs_config = itertools.product(config["sfs-config"]["alignment"],
 					config["sfs-config"]["cluster-size"],
-					config["sfs-config"]["aligned-ops"])
+					config["sfs-config"]["aligned-ops"],
+					config["sfs-config"]["compaction"]["compactness"],
+					config["sfs-config"]["compaction"]["compaction-max-memory-size"])
 				for cur_sfs_config in iter_sfs_config:
 					test_config.fs_specific_params["alignment"] = cur_sfs_config[0]
 					test_config.fs_specific_params["cluster-size"] = cur_sfs_config[1]
 					test_config.fs_specific_params["aligned-ops"] = cur_sfs_config[2]
+					test_config.fs_specific_params["compactness"] = cur_sfs_config[3]
+					test_config.fs_specific_params["compaction-max-memory-size"] = cur_sfs_config[4]
 					yield copy(test_config)
 			else:
 				yield copy(test_config)
