@@ -24,6 +24,7 @@
 #include <boost/process.hpp>
 #include <fmt/format.h>
 #include <seastar/util/log.hh>
+#include <sys/statvfs.h>
 #include <unistd.h>
 
 namespace {
@@ -73,4 +74,13 @@ void mount(const std::string& device_path, const std::string& mount_point) {
     if (bp::system(fmt::format("sudo mount {} {}", device_path, mount_point), bp::std_out > bp::null, bp::std_err > bp::null)) {
         throw std::runtime_error(fmt::format("Couldn't mount {} at {}", device_path, mount_point));
     }
+}
+
+size_t filesystem_remaining_space(const std::string& path) {
+    struct statvfs stat;
+    if (statvfs(path.c_str(), &stat)) {
+        throw std::runtime_error(fmt::format("Couldn't get information about filesystem, path: '{}' error: '{}'",
+                path, strerror(errno)));
+    }
+    return stat.f_bsize * stat.f_bavail;
 }
