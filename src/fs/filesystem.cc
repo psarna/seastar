@@ -123,6 +123,13 @@ future<> filesystem::flush() {
     return _metadata_log->flush_log();
 }
 
+size_t filesystem::remaining_space() {
+    if (!_metadata_log) {
+        return 0; // TODO: or throw?
+    }
+    return _metadata_log->remaining_space();
+}
+
 future<> filesystem::create_directory(std::string path) {
     /* TODO: reduce copy-paste */
     throw_if_empty(path);
