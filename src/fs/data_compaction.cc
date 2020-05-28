@@ -218,7 +218,7 @@ future<> data_compaction::allocate_clusters(std::vector<std::vector<compacted_da
     return _metadata_log._cluster_allocator.alloc_wait(grouped_data_vecs.size()).then(
             [this, grouped_data_vecs = std::move(grouped_data_vecs), memory_data_vecs = std::move(memory_data_vecs)]
             (std::vector<cluster_id_t> cluster_ids) mutable {
-        mlogger.debug("destination clusters: {}", cluster_ids);
+        mlogger.debug("destination clusters: {} for compacted clusters {}", cluster_ids, _compacted_cluster_ids);
 
         for (size_t i = 0; i < cluster_ids.size(); ++i) {
             for (auto& file_data_vec : grouped_data_vecs[i]) {
@@ -301,6 +301,11 @@ void data_compaction::update_previous_data_vecs(compacted_data_vec& comp_vec) {
     file_info.execute_on_data_range(comp_vec_range, [&](inode_data_vec data_vec)  {
         prev_inode_vecs.emplace_back(std::move(data_vec));
     });
+    if (!prev_inode_vecs.empty()) {
+        // File was truncated and comp_vec has data before truncate. We should
+        // trim data in comp_vec.
+        comp_vec_range.end = prev_inode_vecs.back().data_range.end;
+    }
     {
         auto move_comp_vec = [&](file_offset_t new_beg) {
             assert(new_beg > comp_vec._file_offset);
@@ -391,12 +396,16 @@ void data_compaction::update_previous_data_vecs(compacted_data_vec& comp_vec) {
 
         for (auto& data_vec : prev_inode_vecs) {
             // Note that data can be fragmented here so small writes on disk are possible
-            if (is_inode_vec_newer_than_comp_vec(data_vec)) {
-                if (comp_vec._file_offset != data_vec.data_range.beg) {
+            // Because we don't want to fragment writes so we are delaying calling add_write_from_comp_vec() to when
+            // it is necessary.
+            if (is_inode_vec_newer_than_comp_vec(data_vec)) { // New data appeard - compacted data is outdated
+                if (comp_vec._file_offset < data_vec.data_range.beg) {
+                    // Add previously delayed writes
                     add_write_from_comp_vec(data_vec.data_range.beg);
                 }
-                move_comp_vec(data_vec.data_range.end);
+                move_comp_vec(data_vec.data_range.end); // Trim prefix with outdated data
             } else if (data_vec.data_range.end == comp_vec_range.end) {
+                // Add new write for the end of the range.
                 add_write_from_comp_vec(data_vec.data_range.end);
             }
         }
