@@ -119,6 +119,13 @@ future<> filesystem::flush() {
     return _backend_shard->flush_log();
 }
 
+size_t filesystem::remaining_space() {
+    if (!_backend_shard) {
+        return 0; // TODO: or throw?
+    }
+    return _backend_shard->remaining_space();
+}
+
 future<> filesystem::create_directory(std::string path) {
     /* TODO: reduce copy-paste */
     throw_if_empty(path);

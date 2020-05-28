@@ -42,6 +42,10 @@ public:
 
     // @p cluster_id has to be allocated using alloc()
     void free(cluster_id_t cluster_id);
+
+    size_t remaining_clusters_number() const noexcept {
+        return _free_clusters.size();
+    }
 };
 
 } // namespace seastar::fs::backend
