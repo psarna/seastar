@@ -112,16 +112,15 @@ future<> metadata_log_bootstrap::bootstrap(cluster_id_t first_metadata_cluster_i
         if (free_clusters.empty()) {
             return make_exception_future(no_more_space_exception());
         }
-        cluster_id_t datalog_cluster_id = free_clusters.front();
-        _taken_clusters.emplace(datalog_cluster_id);
-        free_clusters.pop_front();
+        mlogger.debug("free clusters: {}", free_clusters.size());
+        _metadata_log._cluster_allocator.reset(std::move(_taken_clusters), std::move(free_clusters));
+
+        cluster_id_t datalog_cluster_id = *_metadata_log._cluster_allocator.alloc();
 
         _metadata_log._curr_data_writer = _metadata_log._curr_data_writer->virtual_constructor();
         _metadata_log._curr_data_writer->init(_metadata_log._cluster_size, _metadata_log._alignment,
                 cluster_id_to_offset(datalog_cluster_id, _metadata_log._cluster_size));
 
-        mlogger.debug("free clusters: {}", free_clusters.size());
-        _metadata_log._cluster_allocator.reset(std::move(_taken_clusters), std::move(free_clusters));
 
         // Reset _inode_allocator
         std::optional<inode_t> max_inode_no;
