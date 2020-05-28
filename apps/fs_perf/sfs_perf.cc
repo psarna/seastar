@@ -137,7 +137,7 @@ int main(int ac, char** av) {
             if (at.configuration().count("device-path") == 0) {
                 td = std::make_unique<temporary_directory>(".seastarfs_dir");
                 tf = std::make_unique<temporary_file>(fmt::format("{}/seastarfs_file", td->path()));
-                tf->truncate(40 * GB); // TODO: fix
+                tf->truncate(400 * MB); // TODO: fix
                 fsconf.device_path = tf->path();
             } else {
                 // TODO: check device size
