@@ -81,7 +81,9 @@ int main(int ac, char** av) {
             ("write-prob", bpo::value<double>()->default_value(0.5),
                     "Total number of write operations divided by total number of all operations")
             ("small-prob", bpo::value<double>()->default_value(0.5),
-                    "Total number of small file operations divided by total number of all operations")
+                    "Total number of small reads/truncates divided by total number of reads/truncates")
+            ("small-write-prob", bpo::value<double>()->default_value(0.5),
+                    "Total number of small writes divided by total number of writes")
             ("op-nb-limit", bpo::value<size_t>(), "Max number of operations, default: no limit")
             ("written-data-limit", bpo::value<std::string>(), "Max written data size, default: no limit")
             ("read-data-limit", bpo::value<std::string>(), "Max read data size, default: no limit")
@@ -108,9 +110,13 @@ int main(int ac, char** av) {
             rconf.write_prob = at.configuration()["write-prob"].as<double>();
             assert(rconf.write_prob <= 1 && "Write prob should be in range [0, 1]");
             rconf.small_prob = at.configuration()["small-prob"].as<double>();
-            assert(rconf.small_prob <= 1 && "Small file operations probability should be in range [0, 1]");
+            assert(rconf.small_prob <= 1 && "Small read/truncate probability should be in range [0, 1]");
             assert((rconf.small_prob > 0 && rconf.small_files_nb > 0) || rconf.small_prob == 0);
             assert((rconf.small_prob < 1 && rconf.big_files_nb > 0) || rconf.small_prob == 1);
+            rconf.small_write_prob = at.configuration()["small-write-prob"].as<double>();
+            assert(rconf.small_write_prob <= 1 && "Small write probability should be in range [0, 1]");
+            assert((rconf.small_write_prob > 0 && rconf.small_files_nb > 0) || rconf.small_write_prob == 0);
+            assert((rconf.small_write_prob < 1 && rconf.big_files_nb > 0) || rconf.small_write_prob == 1);
             rconf.op_nb_limit = at.configuration().count("op-nb-limit") == 0 ?
                     std::nullopt :
                     std::make_optional(at.configuration()["op-nb-limit"].as<size_t>());

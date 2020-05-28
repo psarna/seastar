@@ -96,7 +96,7 @@ future<> fs_tester::do_truncate() {
 future<> fs_tester::do_write(size_t& total_write_len) {
     file_info* file;
     temporary_buffer<uint8_t> buff;
-    if (_prob_dist(_random_engine) < _rcfg.small_prob) {
+    if (_prob_dist(_random_engine) < _rcfg.small_write_prob) {
         file = &_small_files[_small_files_dist(_random_engine)];
         buff = gen_small_buffer();
     } else {

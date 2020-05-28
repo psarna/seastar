@@ -42,6 +42,7 @@ struct run_config {
     std::optional<size_t> read_data_limit;
     double write_prob;
     double small_prob;
+    double small_write_prob;
     size_t alignment;
     size_t parallelism;
     bool aligned_ops;
