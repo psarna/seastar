@@ -213,6 +213,20 @@ def write_plot_info(plot_name, x_axis_name, y_axis_name, lines, f):
 	plot_dict["y-axis"] = y_axis_name
 	yaml.dump(plot_dict, f)
 
+def write_tmp_result(test_result, f):
+	out_dict = {}
+	out_dict["config"] = {}
+	out_dict["config"]["fs-type"] = test_result.config.fs_type
+	if len(test_result.config.fs_specific_params) > 0:
+		out_dict["config"]["fs-specific-params"] = test_result.config.fs_specific_params
+	out_dict["config"]["basic-params"] = test_result.config.basic_params
+	out_dict["results"] = {}
+	out_dict["results"]["median"] = test_result.results.median
+	out_dict["results"]["mad"] = test_result.results.mad
+	out_dict["results"]["min"] = test_result.results.min
+	out_dict["results"]["max"] = test_result.results.max
+	yaml.dump([out_dict], f)
+
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
 	parser.add_argument("config", help="Path to YAML config file", type=str)
@@ -224,12 +238,14 @@ if __name__ == "__main__":
 		test_results = []
 		plot_x_axis_aggregator = runner.get_common_tester_params()["plot-param"]
 		common_params = runner.get_common_params()
-		for test_result in runner.start_tests():
-			test_results.append(test_result)
+		os.makedirs("test_results", exist_ok=True)
+		with open(f"test_results/{common_params['name']}_tmp_results.yaml", "w") as out:
+			for test_result in runner.start_tests():
+				test_results.append(test_result)
+				write_tmp_result(test_result, out)
 		lines = prepare_lines(test_results, plot_x_axis_aggregator)
 		for line in lines:
 			print(line)
-		os.makedirs("test_results", exist_ok=True)
 		with open(f"test_results/{common_params['name']}.yaml", "w") as out:
 			write_plot_info(common_params['name'], plot_x_axis_aggregator,
 				"time", lines, out)
