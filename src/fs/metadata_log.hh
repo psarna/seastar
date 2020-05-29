@@ -256,7 +256,7 @@ private:
 
     template<class Func>
     void schedule_background_compaction(Func&& task) {
-        _background_compactions = when_all_succeed(_background_compactions.get_future(), std::forward<Func>(task));
+        _background_compactions = _background_compactions.get_future().then([task = std::move(task)](){return task();});
     }
 
     void schedule_flush_of_curr_cluster();
@@ -412,9 +412,7 @@ public:
 
     // All disk-related errors will be exposed here
     future<> flush_log() {
-        return _background_compactions.get_future().then([this] {
-            return flush_curr_cluster();
-        });
+        return flush_curr_cluster();
     }
 };
 

@@ -365,7 +365,7 @@ void metadata_log::add_cluster_to_compact(cluster_id_t cluster_id, size_t size) 
     // when it's read-only and enough data becomes out-of-date or when it's already containing little data and it becomes read-only
     if (size == 0) {
         mlogger.debug("Starting immediate compaction: {}", cluster_id);
-        schedule_background_compaction([this, cluster_id] {return compact_data_clusters(std::vector<cluster_id_t>{cluster_id});});
+        schedule_background_task([this, cluster_id] {return compact_data_clusters(std::vector<cluster_id_t>{cluster_id});});
     } else {
         mlogger.info("Adding data cluster {} to compaction", cluster_id);
         if ((_compaction_ready_data_clusters.size() + 1) * _compactness * _cluster_size > _max_data_compaction_memory) {
