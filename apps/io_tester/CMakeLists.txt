@@ -23,5 +23,12 @@
 seastar_add_app (io_tester
   SOURCES io_tester.cc)
 
+seastar_add_app (io_tester_sfs
+  SOURCES io_tester_sfs.cc)
+
 target_link_libraries (app_io_tester
   PRIVATE yaml-cpp::yaml-cpp)
+
+target_link_libraries (app_io_tester_sfs
+        PRIVATE yaml-cpp::yaml-cpp)
+
