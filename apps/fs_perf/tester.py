@@ -135,7 +135,7 @@ class TestRunner:
 		with open(json_output, "r") as out_file:
 			result_json = json.load(out_file)
 
-		test_res_map = result_json["results"]["example"]
+		test_res_map = result_json["results"][self.common_params["name"]]
 		res = Results(float(test_res_map["median"]), float(test_res_map["mad"]), float(test_res_map["min"]), float(test_res_map["max"]))
 		return TestResults(test_config, res)
 
