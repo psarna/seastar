@@ -20,6 +20,7 @@
  */
 
 #include "fs/cluster_allocator.hh"
+#include "fs/cluster.hh"
 #include "seastar/util/log.hh"
 
 #include <cassert>
@@ -77,12 +78,12 @@ void cluster_allocator::do_free(cluster_id_t cluster_id) noexcept {
 }
 
 std::optional<cluster_id_t> cluster_allocator::alloc() noexcept {
-    if (_free_clusters.empty()) {
+    if (_cluster_sem.available_units() == 0) {
         return std::nullopt;
     }
-
-    assert(_cluster_sem.available_units() > 0);
     _cluster_sem.consume(1);
+
+    assert(_free_clusters.size() > 0);
 
     cluster_id_t cluster_id = do_alloc();
     mlogger.debug("Allocating cluster: {}", cluster_id);
