@@ -29,6 +29,8 @@
 #include <seastar/core/timer.hh>
 #include <seastar/core/thread.hh>
 #include <seastar/core/print.hh>
+#include <seastar/core/units.hh>
+#include <seastar/fs/filesystem.hh>
 #include <chrono>
 #include <vector>
 #include <boost/range/irange.hpp>
@@ -107,7 +109,7 @@ struct job_config {
     request_type type;
     shard_config shard_placement;
     ::shard_info shard_info;
-    std::unique_ptr<class_data> gen_class_data();
+    std::unique_ptr<class_data> gen_class_data(fs::filesystem& fs);
 };
 
 std::array<double, 4> quantiles = { 0.5, 0.95, 0.99, 0.999};
@@ -131,17 +133,20 @@ protected:
     std::uniform_int_distribution<uint32_t> _pos_distribution;
     file _file;
 
+    fs::filesystem& _fs;
+
     virtual future<> do_start(sstring dir) = 0;
     virtual future<size_t> issue_request(char *buf) = 0;
 public:
     static int idgen();
-    class_data(job_config cfg)
+    class_data(job_config cfg, fs::filesystem& fs)
         : _config(std::move(cfg))
         , _alignment(_config.shard_info.request_size >= 4096 ? 4096 : 512)
         , _iop(engine().register_one_priority_class(format("test-class-{:d}", idgen()), _config.shard_info.shares))
         , _sg(cfg.shard_info.scheduling_group)
         , _latencies(extended_p_square_probabilities = quantiles)
         , _pos_distribution(0,  file_data_size / _config.shard_info.request_size)
+        , _fs(fs)
     {}
 
     virtual ~class_data() = default;
@@ -288,13 +293,13 @@ public:
 
 class io_class_data : public class_data {
 public:
-    io_class_data(job_config cfg) : class_data(std::move(cfg)) {}
+    io_class_data(job_config cfg, fs::filesystem& fs) : class_data(std::move(cfg), fs) {}
 
     future<> do_start(sstring dir) override {
         auto fname = format("{}/test-{}-{:d}", dir, name(), this_shard_id());
-        return open_file_dma(fname, open_flags::rw | open_flags::create | open_flags::truncate).then([this, fname] (auto f) {
+        return _fs.create_and_open_file(fname, open_flags::rw | open_flags::create | open_flags::truncate).then([this, fname] (auto f) {
             _file = f;
-            return remove_file(fname);
+            return make_ready_future(); // TODO: return _fs.remove_file(fname);
         }).then([this, fname] {
             return do_with(seastar::semaphore(64), [this] (auto& write_parallelism) mutable {
                 auto bufsize = 256ul << 10;
@@ -338,7 +343,7 @@ public:
 
 class read_io_class_data : public io_class_data {
 public:
-    read_io_class_data(job_config cfg) : io_class_data(std::move(cfg)) {}
+    read_io_class_data(job_config cfg, fs::filesystem& fs) : io_class_data(std::move(cfg), fs) {}
 
     future<size_t> issue_request(char *buf) override {
         return _file.dma_read(this->get_pos(), buf, this->req_size(), _iop);
@@ -347,7 +352,7 @@ public:
 
 class write_io_class_data : public io_class_data {
 public:
-    write_io_class_data(job_config cfg) : io_class_data(std::move(cfg)) {}
+    write_io_class_data(job_config cfg, fs::filesystem& fs) : io_class_data(std::move(cfg), fs) {}
 
     future<size_t> issue_request(char *buf) override {
         return _file.dma_write(this->get_pos(), buf, this->req_size(), _iop);
@@ -356,7 +361,7 @@ public:
 
 class cpu_class_data : public class_data {
 public:
-    cpu_class_data(job_config cfg) : class_data(std::move(cfg)) {}
+    cpu_class_data(job_config cfg, fs::filesystem& fs) : class_data(std::move(cfg), fs) {}
 
     future<> do_start(sstring dir) override {
         return make_ready_future<>();
@@ -383,13 +388,13 @@ public:
     }
 };
 
-std::unique_ptr<class_data> job_config::gen_class_data() {
+std::unique_ptr<class_data> job_config::gen_class_data(fs::filesystem& fs) {
     if (type == request_type::cpu) {
-        return std::make_unique<cpu_class_data>(*this);
+        return std::make_unique<cpu_class_data>(*this, fs);
     } else if ((type == request_type::seqread) || (type == request_type::randread)) {
-        return std::make_unique<read_io_class_data>(*this);
+        return std::make_unique<read_io_class_data>(*this, fs);
     } else {
-        return std::make_unique<write_io_class_data>(*this);
+        return std::make_unique<write_io_class_data>(*this, fs);
     }
 }
 
@@ -522,15 +527,18 @@ class context {
     std::chrono::seconds _duration;
 
     semaphore _finished;
+
+    fs::filesystem& _fs;
 public:
-    context(sstring dir, std::vector<job_config> req_config, unsigned duration)
+    context(std::vector<job_config> req_config, unsigned duration, fs::filesystem& fs)
             : _cl(boost::copy_range<std::vector<std::unique_ptr<class_data>>>(req_config
                 | boost::adaptors::filtered([] (auto& cfg) { return cfg.shard_placement.is_set(this_shard_id()); })
-                | boost::adaptors::transformed([] (auto& cfg) { return cfg.gen_class_data(); })
+                | boost::adaptors::transformed([&fs] (auto& cfg) { return cfg.gen_class_data(fs); })
             ))
-            , _dir(dir)
+            , _dir("/" + std::to_string(this_shard_id()))
             , _duration(duration)
             , _finished(0)
+            , _fs(fs)
     {}
 
     future<> stop() {
@@ -540,8 +548,10 @@ public:
     }
 
     future<> start() {
-        return parallel_for_each(_cl, [this] (std::unique_ptr<class_data>& cl) {
-            return cl->start(_dir);
+        return _fs.create_directory(_dir).then([this] () {
+            return parallel_for_each(_cl, [this] (std::unique_ptr<class_data>& cl) {
+                return cl->start(_dir);
+            });
         });
     }
 
@@ -577,21 +587,21 @@ int main(int ac, char** av) {
     app_template app;
     auto opt_add = app.add_options();
     opt_add
-        ("directory", bpo::value<sstring>()->default_value("."), "directory where to execute the test")
+        ("device", bpo::value<sstring>()->default_value("/tmp/seastarfs"), "device path where to execute the test")
         ("duration", bpo::value<unsigned>()->default_value(10), "for how long (in seconds) to run the test")
         ("conf", bpo::value<sstring>()->default_value("./conf.yaml"), "YAML file containing benchmark specification")
     ;
 
     distributed<context> ctx;
+    distributed<fs::filesystem> fs;
+    constexpr uint64_t version = 1;
+    constexpr fs::unit_size_t cluster_size = 16 * MB;
+    constexpr fs::unit_size_t alignment = 4 * KB;
+    constexpr fs::inode_t root_directory = 0;
     return app.run(ac, av, [&] {
         return seastar::async([&] {
             auto& opts = app.configuration();
-            auto& directory = opts["directory"].as<sstring>();
-
-            auto fs = file_system_at(directory).get0();
-            if (fs != fs_type::xfs) {
-                throw std::runtime_error(format("This is a performance test. {} is not on XFS", directory));
-            }
+            auto& device = opts["device"].as<sstring>();
 
             auto& duration = opts["duration"].as<unsigned>();
             auto& yaml = opts["conf"].as<sstring>();
@@ -604,9 +614,14 @@ int main(int ac, char** av) {
                 });
             }).get();
 
-            ctx.start(directory, reqs, duration).get0();
+            fs::mkfs(device, version, cluster_size, alignment, root_directory, smp::count).get();
+            bootfs(fs, device, -1, 0).get();
+            ctx.start(reqs, duration, std::ref(fs)).get0();
             engine().at_exit([&ctx] {
                 return ctx.stop();
+            });
+            engine().at_exit([&fs] {
+                return fs.stop();
             });
             std::cout << "Creating initial files..." << std::endl;
             ctx.invoke_on_all([] (auto& c) {
