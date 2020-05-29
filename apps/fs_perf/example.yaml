@@ -1,29 +1,29 @@
 - name: example
   fs: [SFS, EXT4, XFS]
-  device-path: /dev/nvme0n1p1
-  runs-nb: 3
-  smp: [4]
+  device-path: /dev/sdX
+  runs-nb: 100
+  smp: [5, 1, 12]
   files-info:
-    small-files-nb: [16]
-    big-files-nb: [16]
+    small-files-nb: [1, 2, 4, 8, 16, 1024]
+    big-files-nb: [1, 2, 4, 8, 16]
   probabilities:
-    small-prob: [0.3, 0.8]
+    small-prob: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
+    write-prob: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
     small-write-prob: [0.2, 0.5]
-    write-prob: [0.5]
   operations-info:
     limits:
-      written-data-limit: 5G
-      # read-data-limit: 400M
-      # op-nb-limit: 10000
-    parallelism: [64, 128, 512]
+      written-data-limit: 400M
+      read-data-limit: 400M
+      op-nb-limit: 10000
+    parallelism: [64, 128, 256]
     seq-writes: [false, true]
-    small-op-size-range: [[0, 1023k]]
-    big-op-size-range: [[4M, 64M]]
+    small-op-size-range: [[0M, 1023k], [1023k, 1023k]]
+    big-op-size-range: [[1M, 20M], [1M, 1M], [10M, 10M]]
   sfs-config:
-    alignment: [4k]
-    cluster-size: [4M, 32M]
-    aligned-ops: [true]
+    alignment: [4k, 16k]
+    cluster-size: [1M, 8M, 32M]
+    aligned-ops: [false, true]
     compaction:
       compactness: [0.5, 0.3, 0]
       compaction-max-memory-size: [256M]
-  plot-param: smp
+  plot-param: write-prob
