@@ -97,6 +97,9 @@ future<> metadata_log::bootstrap(inode_t root_dir, cluster_id_t first_metadata_c
 }
 
 future<> metadata_log::shutdown() {
+    // TODO: Wait for all active operations (reads, writes, etc.) and don't
+    //       allow for any new operations
+    _compactness = -1; // Turn off compactions
     return flush_log().then([this] {
         return _device.close();
     });
