@@ -21,6 +21,7 @@
 
 #include "fs/cluster_allocator.hh"
 #include "fs/cluster.hh"
+#include "seastar/core/semaphore.hh"
 #include "seastar/util/log.hh"
 
 #include <cassert>
@@ -90,10 +91,10 @@ std::optional<cluster_id_t> cluster_allocator::alloc() noexcept {
     return cluster_id;
 }
 
-future<std::vector<cluster_id_t>> cluster_allocator::alloc_wait(size_t count) {
+future<std::vector<cluster_id_t>> cluster_allocator::alloc_wait(semaphore::duration duration, size_t count) {
     std::vector<cluster_id_t> cluster_ids;
     cluster_ids.reserve(count);
-    return _cluster_sem.wait(count).then([this, count, cluster_ids = std::move(cluster_ids)]() mutable {
+    return _cluster_sem.wait(duration, count).then([this, count, cluster_ids = std::move(cluster_ids)]() mutable {
         for (size_t i = 0; i < count; ++i) {
             cluster_ids.emplace_back(do_alloc());
         }

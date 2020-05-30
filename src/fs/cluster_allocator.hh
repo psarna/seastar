@@ -61,7 +61,7 @@ public:
 
     // Waits until @p count free clusters are available and allocates them.
     // Strong exception guarantee is provided.
-    future<std::vector<cluster_id_t>> alloc_wait(size_t count = 1);
+    future<std::vector<cluster_id_t>> alloc_wait(semaphore::duration duration, size_t count = 1);
 
     // @p cluster_id has to be allocated using alloc() or alloc_wait()
     void free(cluster_id_t cluster_id) noexcept;

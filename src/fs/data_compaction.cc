@@ -24,15 +24,17 @@
 #include "fs/device_reader.hh"
 #include "fs/inode_info.hh"
 #include "fs/metadata_log_operations/write.hh"
-#include "seastar/fs/bitwise.hh"
-#include "seastar/fs/units.hh"
 #include "seastar/core/do_with.hh"
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
+#include "seastar/core/semaphore.hh"
 #include "seastar/core/temporary_buffer.hh"
+#include "seastar/fs/bitwise.hh"
+#include "seastar/fs/units.hh"
 
 #include <algorithm>
 #include <boost/iterator/counting_iterator.hpp>
+#include <chrono>
 #include <exception>
 #include <optional>
 #include <stdexcept>
@@ -214,8 +216,9 @@ future<> data_compaction::allocate_clusters(std::vector<std::vector<compacted_da
     // Now allocate needed clusters and update offsets adding cluster beginning offset
     // TODO: we could first try to allocate clusters from shared cluster_allocater and if it fails wait for clusters
     //       from another (destined only for compactions) cluster_allocator
-    mlogger.debug("trying to allocate {} clusters", grouped_data_vecs.size());
-    return _metadata_log._cluster_allocator.alloc_wait(grouped_data_vecs.size()).then(
+    size_t alloc_size = grouped_data_vecs.size();
+    mlogger.debug("trying to allocate {} clusters", alloc_size);
+    return _metadata_log._cluster_allocator.alloc_wait(semaphore::duration(std::chrono::seconds(3)), alloc_size).then(
             [this, grouped_data_vecs = std::move(grouped_data_vecs), memory_data_vecs = std::move(memory_data_vecs)]
             (std::vector<cluster_id_t> cluster_ids) mutable {
         mlogger.debug("destination clusters: {} for compacted clusters {}", cluster_ids, _compacted_cluster_ids);
@@ -227,6 +230,9 @@ future<> data_compaction::allocate_clusters(std::vector<std::vector<compacted_da
         }
 
         return save_compacted_data_vecs(std::move(cluster_ids), std::move(grouped_data_vecs), std::move(memory_data_vecs));
+    }).handle_exception_type([alloc_size = alloc_size](seastar::semaphore_timed_out e) {
+        mlogger.warn("Couldn't allocate {} clusters for compaction. Aborting compaction.", alloc_size);
+        return make_exception_future(seastar::fs::no_more_space_exception());
     });
 }
 
