@@ -44,6 +44,7 @@
 #include "seastar/core/future-util.hh"
 #include "seastar/core/future.hh"
 #include "seastar/core/shared_mutex.hh"
+#include "seastar/core/thread.hh"
 #include "seastar/fs/exceptions.hh"
 #include "seastar/fs/overloaded.hh"
 #include "seastar/fs/stat.hh"
@@ -97,11 +98,16 @@ future<> metadata_log::bootstrap(inode_t root_dir, cluster_id_t first_metadata_c
 }
 
 future<> metadata_log::shutdown() {
-    // TODO: Wait for all active operations (reads, writes, etc.) and don't
-    //       allow for any new operations
-    _compactness = -1; // Turn off compactions
-    return flush_log().then([this] {
-        return _device.close();
+    return async([this] {
+        // TODO: Wait for all active operations (reads, writes, etc.) and don't
+        //       allow for any new operations
+        _compactness = -1; // Turn off compactions
+        try {
+            flush_log().get();
+        } catch (...) {
+            mlogger.warn("Error while flushing log during shutdown: {}", std::current_exception());
+        }
+        _device.close().get();
     });
 }
 
