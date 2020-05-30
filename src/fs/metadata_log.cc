@@ -367,18 +367,15 @@ void metadata_log::add_cluster_to_compact(cluster_id_t cluster_id, size_t size) 
     // To add any cluster to compact only once, we add it the first time it becomes suitable - either
     // when it's read-only and enough data becomes out-of-date or when it's already containing little data and it becomes read-only
     if (size == 0) {
-        mlogger.debug("Starting immediate compaction: {}", cluster_id);
         schedule_background_task([this, cluster_id] {return compact_data_clusters(std::vector<cluster_id_t>{cluster_id});});
     } else {
-        mlogger.info("Adding data cluster {} to compaction", cluster_id);
+        mlogger.debug("Adding data cluster {} to compaction", cluster_id);
         if ((_compaction_ready_data_clusters.size() + 1) * _compactness * _cluster_size > _max_data_compaction_memory) {
-            mlogger.info("Running compaction on clusters {}", _compaction_ready_data_clusters);
+            mlogger.debug("Running compaction on clusters {}", _compaction_ready_data_clusters);
             std::vector<cluster_id_t> move_vec = {};
             _compaction_ready_data_clusters.swap(move_vec);
-            mlogger.debug("Starting group compaction: {}", move_vec);
             schedule_background_compaction([this, move_vec = std::move(move_vec)] {return compact_data_clusters(std::move(move_vec));});
         }
-        mlogger.debug("Adding cluster to compaction group: {}", cluster_id);
         _compaction_ready_data_clusters.push_back(cluster_id);
     }
 }
