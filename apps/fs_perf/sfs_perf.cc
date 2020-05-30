@@ -72,8 +72,8 @@ protected:
 
         std::string shard_dir = fmt::format("/{}", this_shard_id());
         _fs.create_directory(shard_dir).get();
-        _small_files = create_files(fmt::format("{}/small_", shard_dir), _rcfg.small_files_nb);
-        _big_files = create_files(fmt::format("{}/big_", shard_dir), _rcfg.big_files_nb);
+        _small_files = create_files(fmt::format("{}/small_", shard_dir), _dgcfg.small_files_nb);
+        _big_files = create_files(fmt::format("{}/big_", shard_dir), _dgcfg.big_files_nb);
     }
 };
 

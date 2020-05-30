@@ -66,8 +66,8 @@ protected:
             }
             return ret;
         };
-        _small_files = create_files(fmt::format("{}/small_{}_", _mount_point, this_shard_id()), _rcfg.small_files_nb);
-        _big_files = create_files(fmt::format("{}/big_{}_", _mount_point, this_shard_id()), _rcfg.big_files_nb);
+        _small_files = create_files(fmt::format("{}/small_{}_", _mount_point, this_shard_id()), _dgcfg.small_files_nb);
+        _big_files = create_files(fmt::format("{}/big_{}_", _mount_point, this_shard_id()), _dgcfg.big_files_nb);
     }
 };
 

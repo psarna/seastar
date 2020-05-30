@@ -51,7 +51,25 @@ struct run_config {
 
 class fs_tester {
 protected:
-    run_config _rcfg;
+    struct run_execution_config {
+        std::optional<size_t> op_nb_limit;
+        std::optional<size_t> written_data_limit;
+        std::optional<size_t> read_data_limit;
+        size_t parallelism;
+        double write_prob;
+    } _recfg;
+
+    struct data_gen_config {
+        size_t small_files_nb;
+        size_t big_files_nb;
+        std::pair<size_t, size_t> big_op_size_range;
+        std::pair<size_t, size_t> small_op_size_range;
+        double small_prob;
+        double small_write_prob;
+        size_t alignment;
+        bool aligned_ops;
+        bool seq_writes;
+    } _dgcfg;
 
     std::default_random_engine _random_engine;
 
@@ -86,12 +104,7 @@ protected:
     size_t gen_op_pos(size_t min, size_t max);
 
 public:
-    fs_tester(run_config rconf)
-        : _rcfg(std::move(rconf))
-        , _prob_dist(0, 1)
-        , _small_files_dist(0, _rcfg.small_files_nb == 0 ? 0 : _rcfg.small_files_nb - 1)
-        , _big_files_dist(0, _rcfg.big_files_nb == 0 ? 0 : _rcfg.big_files_nb - 1)
-        {}
+    fs_tester(run_config rconf);
 
 protected:
     seastar::future<> do_truncate();
@@ -101,6 +114,8 @@ protected:
     seastar::future<> do_read(size_t& total_read_len);
 
     virtual seastar::future<> post_test_callback() { return seastar::now(); }
+
+    seastar::future<> run_execution(run_execution_config& recfg);
 
 public:
     seastar::future<> run();

@@ -44,6 +44,29 @@ namespace {
 logger mlogger("fs_perf");
 } // namespace
 
+fs_tester::fs_tester(run_config rconf)
+    : _recfg {
+        .op_nb_limit = std::move(rconf.op_nb_limit),
+        .written_data_limit = std::move(rconf.written_data_limit),
+        .read_data_limit = std::move(rconf.read_data_limit),
+        .parallelism = rconf.parallelism,
+        .write_prob = rconf.write_prob,
+    }
+    , _dgcfg {
+        .small_files_nb = rconf.small_files_nb,
+        .big_files_nb = rconf.big_files_nb,
+        .big_op_size_range = rconf.big_op_size_range,
+        .small_op_size_range = rconf.small_op_size_range,
+        .small_prob = rconf.small_prob,
+        .small_write_prob = rconf.small_write_prob,
+        .alignment = rconf.alignment,
+        .aligned_ops = rconf.aligned_ops,
+        .seq_writes = rconf.seq_writes,
+    }
+    , _prob_dist(0, 1)
+    , _small_files_dist(0, rconf.small_files_nb == 0 ? 0 : rconf.small_files_nb - 1)
+    , _big_files_dist(0, rconf.big_files_nb == 0 ? 0 : rconf.big_files_nb - 1) {}
+
 temporary_buffer<uint8_t> fs_tester::share_base_buffer(size_t size) {
     auto tmp = _base_buffer.share();
     tmp.trim_front(tmp.size() - size);
@@ -59,7 +82,7 @@ temporary_buffer<uint8_t> fs_tester::gen_big_buffer() {
 }
 
 temporary_buffer<uint8_t> fs_tester::allocate_read_buffer(size_t size) {
-    return _rcfg.aligned_ops ? temporary_buffer<uint8_t>::aligned(_rcfg.alignment, size) :
+    return _dgcfg.aligned_ops ? temporary_buffer<uint8_t>::aligned(_dgcfg.alignment, size) :
             temporary_buffer<uint8_t>(size);
 }
 
@@ -72,11 +95,11 @@ size_t fs_tester::gen_big_op_size() {
 }
 
 size_t fs_tester::gen_op_pos(size_t min, size_t max) {
-    if (_rcfg.aligned_ops) {
-        auto aligned_min = round_up_to_multiple_of_power_of_2(min, _rcfg.alignment);
-        auto aligned_max = round_down_to_multiple_of_power_of_2(max, _rcfg.alignment);
+    if (_dgcfg.aligned_ops) {
+        auto aligned_min = round_up_to_multiple_of_power_of_2(min, _dgcfg.alignment);
+        auto aligned_max = round_down_to_multiple_of_power_of_2(max, _dgcfg.alignment);
         auto dist = std::uniform_int_distribution<size_t>(aligned_min, aligned_max);
-        return round_down_to_multiple_of_power_of_2(dist(_random_engine), _rcfg.alignment);
+        return round_down_to_multiple_of_power_of_2(dist(_random_engine), _dgcfg.alignment);
     } else {
         auto dist = std::uniform_int_distribution<size_t>(min, max);
         return dist(_random_engine);
@@ -86,7 +109,7 @@ size_t fs_tester::gen_op_pos(size_t min, size_t max) {
 future<> fs_tester::do_truncate() {
     file_info* file;
     size_t truncate_size;
-    if (_prob_dist(_random_engine) < _rcfg.small_prob) {
+    if (_prob_dist(_random_engine) < _dgcfg.small_prob) {
         file = &_small_files[_small_files_dist(_random_engine)];
         truncate_size = gen_small_op_size();
     } else {
@@ -103,7 +126,7 @@ future<> fs_tester::do_truncate() {
 future<> fs_tester::do_write(size_t& total_write_len) {
     file_info* file;
     temporary_buffer<uint8_t> buff;
-    if (_prob_dist(_random_engine) < _rcfg.small_write_prob) {
+    if (_prob_dist(_random_engine) < _dgcfg.small_write_prob) {
         file = &_small_files[_small_files_dist(_random_engine)];
         buff = gen_small_buffer();
     } else {
@@ -112,7 +135,7 @@ future<> fs_tester::do_write(size_t& total_write_len) {
     }
 
     size_t write_pos;
-    if (_rcfg.seq_writes) {
+    if (_dgcfg.seq_writes) {
         write_pos = file->_size;
         file->_size += buff.size();
         total_files_size += buff.size();
@@ -129,13 +152,13 @@ future<> fs_tester::do_write(size_t& total_write_len) {
 
     return file->_file.dma_write(write_pos, buff.get(), buff.size()).then([buff = std::move(buff)](size_t write_len) {
         assert(write_len == buff.size());
-    }); // TODO: handle no more space
+    });
 }
 
 future<> fs_tester::do_read(size_t& total_read_len) { // TODO: dont read from holes
     file_info* file;
     size_t read_size;
-    if (_prob_dist(_random_engine) < _rcfg.small_prob) {
+    if (_prob_dist(_random_engine) < _dgcfg.small_prob) {
         file = &_small_files[_small_files_dist(_random_engine)];
         read_size = gen_small_op_size();
     } else {
@@ -151,9 +174,9 @@ future<> fs_tester::do_read(size_t& total_read_len) { // TODO: dont read from ho
     });
 }
 
-future<> fs_tester::run() {
-    return async([this] {
-        semaphore write_parallelism(_rcfg.parallelism);
+future<> fs_tester::run_execution(run_execution_config& recfg) {
+    return async([this, &recfg] {
+        semaphore write_parallelism(recfg.parallelism);
         gate gate;
         size_t iter = 0;
         size_t total_write_len = 0;
@@ -161,9 +184,9 @@ future<> fs_tester::run() {
         bool truncate_mode = false;
         std::optional<std::exception_ptr> exception_occurred;
         auto stop_run = [&] {
-            return (_rcfg.written_data_limit && total_write_len >= *_rcfg.written_data_limit) ||
-                    (_rcfg.read_data_limit && total_read_len >= *_rcfg.read_data_limit) ||
-                    (_rcfg.op_nb_limit && iter >= _rcfg.op_nb_limit);
+            return (recfg.written_data_limit && total_write_len >= *recfg.written_data_limit) ||
+                    (recfg.read_data_limit && total_read_len >= *recfg.read_data_limit) ||
+                    (recfg.op_nb_limit && iter >= recfg.op_nb_limit);
         };
         while (!stop_run()) {
             auto units = get_units(write_parallelism, 1).get0();
@@ -184,7 +207,7 @@ future<> fs_tester::run() {
                 if (_prob_dist(_random_engine) < 0.2) {
                     op_future = do_truncate();
                 } else {
-                    if (_prob_dist(_random_engine) < _rcfg.write_prob) {
+                    if (_prob_dist(_random_engine) < recfg.write_prob) {
                         op_future = do_write(total_write_len);
                     } else {
                         op_future = do_read(total_read_len);
@@ -209,9 +232,13 @@ future<> fs_tester::run() {
     });
 }
 
+future<> fs_tester::run() {
+    return run_execution(_recfg);
+}
+
 void fs_tester::setup_generators() {
     auto create_op_size_generator =
-            [this, aligned = _rcfg.aligned_ops, alignment = _rcfg.alignment](size_t min, size_t max) ->
+            [this, aligned = _dgcfg.aligned_ops, alignment = _dgcfg.alignment](size_t min, size_t max) ->
             std::function<size_t()> {
         if (aligned) {
             auto aligned_min = round_up_to_multiple_of_power_of_2(min, alignment);
@@ -229,14 +256,14 @@ void fs_tester::setup_generators() {
         }
     };
 
-    _gen_small_op_size = create_op_size_generator(_rcfg.small_op_size_range.first, _rcfg.small_op_size_range.second);
-    _gen_big_op_size = create_op_size_generator(_rcfg.big_op_size_range.first, _rcfg.big_op_size_range.second);
+    _gen_small_op_size = create_op_size_generator(_dgcfg.small_op_size_range.first, _dgcfg.small_op_size_range.second);
+    _gen_big_op_size = create_op_size_generator(_dgcfg.big_op_size_range.first, _dgcfg.big_op_size_range.second);
 
     _base_buffer = [this] {
         temporary_buffer<uint8_t> ret;
-        size_t max_size = std::max(_rcfg.small_op_size_range.second, _rcfg.big_op_size_range.second);
-        ret = _rcfg.aligned_ops ? temporary_buffer<uint8_t>::aligned(_rcfg.alignment,
-                round_down_to_multiple_of_power_of_2(max_size, _rcfg.alignment)) :
+        size_t max_size = std::max(_dgcfg.small_op_size_range.second, _dgcfg.big_op_size_range.second);
+        ret = _dgcfg.aligned_ops ? temporary_buffer<uint8_t>::aligned(_dgcfg.alignment,
+                round_down_to_multiple_of_power_of_2(max_size, _dgcfg.alignment)) :
                 temporary_buffer<uint8_t>(max_size);
         auto dist = std::uniform_int_distribution<uint8_t>();
         std::generate_n(ret.get_write(), ret.size(), [&] {
@@ -264,29 +291,24 @@ void fs_tester::setup_fs_state() {
     init_files(_small_files, [this] { return gen_small_buffer(); });
     init_files(_big_files, [this] { return gen_big_buffer(); });
 
-    size_t total_write_len = 0;
+    run_execution_config recfg {
+        .op_nb_limit = std::nullopt,
+        .written_data_limit = 2 * filesystem_size(),
+        .read_data_limit = std::nullopt,
+        .parallelism = 64,
+        .write_prob = 1,
+    };
 
     // Write around 2 * filesystem-size so we won't measure time on (nearly) brand new filesystem.
-    while (total_write_len < 2 * filesystem_size()) {
-        if (3 * total_files_size >= 2 * filesystem_size()) {
-            while (3 * total_files_size > filesystem_size()) {
-                do_truncate().get();
-            }
-        }
-        if (_prob_dist(_random_engine) < 0.2) {
-            do_truncate().get();
-        } else {
-            do_write(total_write_len).get();
-        }
-    }
+    run_execution(recfg).get();
 }
 
 future<> fs_tester::init() {
     return async([&] {
         setup_generators();
         create_files();
-        assert(_small_files.size() == _rcfg.small_files_nb);
-        assert(_big_files.size() == _rcfg.big_files_nb);
+        assert(_small_files.size() == _dgcfg.small_files_nb);
+        assert(_big_files.size() == _dgcfg.big_files_nb);
         setup_fs_state();
     });
 }
