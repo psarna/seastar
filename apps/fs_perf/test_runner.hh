@@ -87,6 +87,7 @@ seastar::future<double> start_run(const sfs_config& fsconf, const RunConfig& rco
         tester.stop().get();
     });
 
+    std::cerr << "Starting initialization" << std::endl;
     try {
         tester.invoke_on_all([](RunTester& local_env) {
             return local_env.init();
@@ -96,6 +97,7 @@ seastar::future<double> start_run(const sfs_config& fsconf, const RunConfig& rco
         throw;
     }
 
+    std::cerr << "Starting run" << std::endl;
     return measure_run_time(tester, rconf);
 }
 
@@ -113,6 +115,7 @@ seastar::future<double> start_run(const default_config& fsconf, const RunConfig&
         tester.stop().get();
     });
 
+    std::cerr << "Starting initialization" << std::endl;
     try {
         tester.invoke_on_all([](RunTester& local_env) {
             return local_env.init();
@@ -122,6 +125,7 @@ seastar::future<double> start_run(const default_config& fsconf, const RunConfig&
         throw;
     }
 
+    std::cerr << "Starting run" << std::endl;
     return measure_run_time(tester, rconf);
 }
 
