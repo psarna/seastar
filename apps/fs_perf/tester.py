@@ -150,7 +150,10 @@ class TestRunner:
 
 	def start_tests(self):
 		for test_config in self._iterate_configs():
-			yield self._execute_test(test_config)
+			try:
+				yield self._execute_test(test_config)
+			except RuntimeError as e:
+				print(e)
 
 @dataclass
 class LineInfo:
