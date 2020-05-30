@@ -20,11 +20,14 @@
  */
 
 #include "fs_tester.hh"
+#include "seastar/util/log.hh"
 
 #include <algorithm>
 #include <boost/range/irange.hpp>
 #include <cassert>
 #include <cstdint>
+#include <exception>
+#include <optional>
 #include <random>
 #include <seastar/core/future-util.hh>
 #include <seastar/core/future.hh>
@@ -36,6 +39,10 @@
 
 using namespace seastar;
 using namespace seastar::fs;
+
+namespace {
+logger mlogger("fs_perf");
+} // namespace
 
 temporary_buffer<uint8_t> fs_tester::share_base_buffer(size_t size) {
     auto tmp = _base_buffer.share();
@@ -145,47 +152,60 @@ future<> fs_tester::do_read(size_t& total_read_len) { // TODO: dont read from ho
 }
 
 future<> fs_tester::run() {
-    return do_with(semaphore(_rcfg.parallelism), gate(), (size_t)0, (size_t)0, (size_t)0, false,
-            [this] (semaphore& write_parallelism, gate& gate, size_t& iter, size_t& total_write_len,
-            size_t& total_read_len, bool& truncate_mode) {
-        return do_until([this, &total_write_len, &total_read_len, &iter] {
+    return async([this] {
+        semaphore write_parallelism(_rcfg.parallelism);
+        gate gate;
+        size_t iter = 0;
+        size_t total_write_len = 0;
+        size_t total_read_len = 0;
+        bool truncate_mode = false;
+        std::optional<std::exception_ptr> exception_occurred;
+        auto stop_run = [&] {
             return (_rcfg.written_data_limit && total_write_len >= *_rcfg.written_data_limit) ||
                     (_rcfg.read_data_limit && total_read_len >= *_rcfg.read_data_limit) ||
                     (_rcfg.op_nb_limit && iter >= _rcfg.op_nb_limit);
-        }, [this, &total_write_len, &total_read_len, &write_parallelism, &gate, &iter, &truncate_mode] {
-            return get_units(write_parallelism, 1).then(
-                    [this, &gate, &total_write_len, &total_read_len, &truncate_mode] (auto units) {
-                gate.enter();
-                future<> op_future = now();
-                if (3 * total_files_size >= 2 * filesystem_size()) {
-                    truncate_mode = true;
-                } else if (3 * total_files_size < filesystem_size()) {
-                    truncate_mode = false;
-                }
-                if (truncate_mode) {
+        };
+        while (!stop_run()) {
+            auto units = get_units(write_parallelism, 1).get0();
+            if (exception_occurred) {
+                break;
+            }
+            gate.enter();
+            future<> op_future = now();
+            if (3 * total_files_size >= 2 * filesystem_size()) {
+                truncate_mode = true;
+            } else if (3 * total_files_size < filesystem_size()) {
+                truncate_mode = false;
+            }
+
+            if (truncate_mode) {
+                op_future = do_truncate();
+            } else {
+                if (_prob_dist(_random_engine) < 0.2) {
                     op_future = do_truncate();
                 } else {
-                    if (_prob_dist(_random_engine) > 1) {
-                        op_future = do_truncate();
+                    if (_prob_dist(_random_engine) < _rcfg.write_prob) {
+                        op_future = do_write(total_write_len);
                     } else {
-                        if (_prob_dist(_random_engine) < _rcfg.write_prob) {
-                            op_future = do_write(total_write_len);
-                        } else {
-                            op_future = do_read(total_read_len);
-                        }
+                        op_future = do_read(total_read_len);
                     }
                 }
-                auto tmp = op_future.finally([&gate, units = std::move(units)] {
-                    gate.leave();
-                });
-            }).then([&iter] {
-                iter++;
+            }
+            auto tmp = op_future.handle_exception([&exception_occurred](std::exception_ptr e) {
+                mlogger.info("Exception occurred during run: {}", e);
+                exception_occurred = std::move(e);
+            }).finally([&gate, units = std::move(units)] {
+                gate.leave();
             });
-        }).finally([&gate] {
-            return gate.close();
-        });
-    }).then([this] {
-        return post_test_callback();
+            iter++;
+        }
+        gate.close().get();
+
+        if (exception_occurred) {
+            throw *exception_occurred;
+        }
+
+        post_test_callback().get();
     });
 }
 
