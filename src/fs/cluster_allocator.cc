@@ -105,4 +105,12 @@ void cluster_allocator::free(const std::vector<cluster_id_t>& cluster_ids) noexc
     _cluster_sem.signal(cluster_ids.size());
 }
 
+cluster_id_t cluster_allocator::size() const {
+    return _free_clusters.size() + _allocated_clusters.size();
+}
+
+cluster_id_t cluster_allocator::allocated_size() const {
+    return size() - _cluster_sem.available_units();
+}
+
 } // namespace seastar::fs

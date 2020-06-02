@@ -70,25 +70,25 @@ logger mlogger("fs_metadata_log");
 
 metadata_log::metadata_log(block_device device, uint32_t cluster_size, uint32_t alignment,
     shared_ptr<metadata_to_disk_buffer> cluster_buff, shared_ptr<cluster_writer> data_writer,
-    double compactness, size_t max_data_compaction_memory)
+    double min_compactness, size_t max_data_compaction_memory)
 : _device(std::move(device))
 , _cluster_size(cluster_size)
 , _alignment(alignment)
 , _curr_cluster_buff(std::move(cluster_buff))
 , _curr_data_writer(std::move(data_writer))
 , _inode_allocator(1, 0)
-, _compactness(compactness)
+, _min_compactness(min_compactness)
 , _max_data_compaction_memory(max_data_compaction_memory) {
     assert(is_power_of_2(alignment));
     assert(cluster_size > 0 and cluster_size % alignment == 0);
-    assert(compactness * cluster_size <= max_data_compaction_memory);
+    assert(min_compactness > 0 || ((cluster_id_t) (max_data_compaction_memory / (min_compactness * cluster_size))) * (1-min_compactness) >= 1);
 }
 
 metadata_log::metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment,
-    double compactness, size_t max_data_compaction_memory)
+    double min_compactness, size_t max_data_compaction_memory)
 : metadata_log(std::move(device), cluster_size, alignment,
         make_shared<metadata_to_disk_buffer>(), make_shared<cluster_writer>(),
-        compactness, max_data_compaction_memory) {}
+        min_compactness, max_data_compaction_memory) {}
 
 future<> metadata_log::bootstrap(inode_t root_dir, cluster_id_t first_metadata_cluster_id, cluster_range available_clusters,
         fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id) {
@@ -144,10 +144,7 @@ void metadata_log::cut_out_data_range(inode_info::file& file, file_range range) 
                 size_t pre_cut_cluster_data_size = it->second->get_up_to_date_data_size();
                 it->second->cut_data(disk_data.device_offset, former.data_range, left_remains.data_range, right_remains.data_range);
                 size_t post_cut_cluster_data_size = it->second->get_up_to_date_data_size();
-                if (pre_cut_cluster_data_size > _compactness * _cluster_size && post_cut_cluster_data_size <=
-                        _compactness * _cluster_size && _read_only_data_clusters.count(it->first) == 1) {
-                    add_cluster_to_compact(it->first, post_cut_cluster_data_size);
-                }
+                update_cluster_data_size(it->first, pre_cut_cluster_data_size, post_cut_cluster_data_size);
             },
             [&](const inode_data_vec::hole_data&) {
             },
@@ -331,6 +328,28 @@ void metadata_log::memory_only_delete_dir_entry(inode_info::directory& dir, std:
     }
 }
 
+std::optional<cluster_id_t> metadata_log::alloc_cluster() noexcept {
+    std::optional<cluster_id_t> ret = _cluster_allocator.alloc();
+    if (ret) {
+        update_compactness();
+    }
+    return ret;
+}
+future<std::vector<cluster_id_t>> metadata_log::alloc_clusters_wait(size_t count) {
+    return _cluster_allocator.alloc_wait(count).then([this](std::vector<cluster_id_t> cluster_ids){
+        update_compactness();
+        return make_ready_future<std::vector<cluster_id_t>>(std::move(cluster_ids));
+    });
+}
+void metadata_log::free_cluster(cluster_id_t cluster_id) noexcept {
+    _cluster_allocator.free(cluster_id);
+    update_compactness();
+}
+void metadata_log::free_clusters(const std::vector<cluster_id_t>& cluster_ids) noexcept {
+    free_clusters(cluster_ids);
+    update_compactness();
+}
+
 void metadata_log::finish_writing_data_cluster(cluster_id_t cluster_id) {
     mlogger.debug("moving cluster to read only: {}", cluster_id);
     auto nh = _writable_data_clusters.extract(cluster_id);
@@ -338,9 +357,7 @@ void metadata_log::finish_writing_data_cluster(cluster_id_t cluster_id) {
     auto insert_res = _read_only_data_clusters.insert(std::move(nh));
     assert(insert_res.inserted);
     size_t up_to_date_size = insert_res.position->second.get_up_to_date_data_size();
-    if (up_to_date_size <= _compactness * _cluster_size) {
-        add_cluster_to_compact(cluster_id, up_to_date_size);
-    }
+    try_compacting_data_cluster(cluster_id, up_to_date_size);
 }
 
 void metadata_log::make_data_cluster_writable(cluster_id_t cluster_id) {
@@ -357,23 +374,48 @@ void metadata_log::free_writable_data_cluster(cluster_id_t cluster_id) noexcept 
     assert(num == 1);
     num = _writable_data_clusters.erase(cluster_id);
     assert(num == 1);
-    _cluster_allocator.free(cluster_id);
+    free_cluster(cluster_id);
 }
 
-void metadata_log::add_cluster_to_compact(cluster_id_t cluster_id, size_t size) {
-    // To add any cluster to compact only once, we add it the first time it becomes suitable - either
-    // when it's read-only and enough data becomes out-of-date or when it's already containing little data and it becomes read-only
-    if (size == 0) {
+void metadata_log::try_compacting_data_cluster(cluster_id_t cluster_id, size_t size) {
+    if (size > _current_compactness * _cluster_size) {
+        _compaction_awaiting_data_clusters.insert(std::make_pair(size, cluster_id));
+    } else if (size == 0) {
+        mlogger.debug("Running compaction on empty cluster {}", cluster_id);
         schedule_background_task([this, cluster_id] {return compact_data_clusters(std::vector<cluster_id_t>{cluster_id});});
     } else {
         mlogger.debug("Adding data cluster {} to compaction", cluster_id);
-        if ((_compaction_ready_data_clusters.size() + 1) * _compactness * _cluster_size > _max_data_compaction_memory) {
+        if (_compaction_ready_data_size + size > _max_data_compaction_memory) {
             mlogger.debug("Running compaction on clusters {}", _compaction_ready_data_clusters);
             std::vector<cluster_id_t> move_vec = {};
             _compaction_ready_data_clusters.swap(move_vec);
             schedule_background_compaction([this, move_vec = std::move(move_vec)] {return compact_data_clusters(std::move(move_vec));});
         }
         _compaction_ready_data_clusters.push_back(cluster_id);
+    }
+}
+
+void metadata_log::update_cluster_data_size(cluster_id_t cluster_id, size_t old_size, size_t new_size) {
+    if (_read_only_data_clusters.count(cluster_id) != 1) {
+        return;
+    }
+    if (_compaction_awaiting_data_clusters.erase(std::make_pair(old_size, cluster_id)) == 1) {
+        // Otherwise it's already being compacted
+        try_compacting_data_cluster(cluster_id, new_size);
+    }
+}
+
+void metadata_log::update_compactness() {
+    _current_compactness = _min_compactness * _cluster_allocator.allocated_size() / _cluster_allocator.size();
+    while (!_compaction_awaiting_data_clusters.empty()) {
+        auto it = _compaction_awaiting_data_clusters.begin();
+        if (it->first > _current_compactness * _cluster_size) {
+            break;
+        }
+        auto nh = _compaction_awaiting_data_clusters.extract(it);
+        assert(!nh.empty());
+        auto [cluster_data_size, cluster_id] = nh.value();
+        try_compacting_data_cluster(cluster_id, cluster_data_size);
     }
 }
 
@@ -411,7 +453,7 @@ future<> metadata_log::flush_curr_cluster() {
 metadata_log::flush_result metadata_log::schedule_flush_of_curr_cluster_and_change_it_to_new_one() {
     throw_if_read_only_fs();
 
-    auto next_cluster = _cluster_allocator.alloc();
+    auto next_cluster = alloc_cluster();
     if (not next_cluster) {
         // Here metadata log dies, we cannot even flush current cluster because from there we won't be able to recover
         // TODO: ^ add protection from it

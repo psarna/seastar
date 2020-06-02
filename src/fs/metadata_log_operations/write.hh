@@ -187,7 +187,7 @@ private:
                         // No space left in the current to_disk_buffer for medium write - allocate a new buffer
 
                         _metadata_log.throw_if_read_only_fs();
-                        std::optional<cluster_id_t> cluster_opt = _metadata_log._cluster_allocator.alloc();
+                        std::optional<cluster_id_t> cluster_opt = _metadata_log.alloc_cluster();
                         if (not cluster_opt) {
                             // TODO: maybe we should return partial write instead of exception?
                             return make_exception_future<bool_class<stop_iteration_tag>>(no_more_space_exception());
@@ -275,7 +275,7 @@ private:
         _metadata_log.throw_if_read_only_fs();
 
         // aligned_expected_write_len = _metadata_log._cluster_size
-        std::optional<cluster_id_t> cluster_opt = _metadata_log._cluster_allocator.alloc();
+        std::optional<cluster_id_t> cluster_opt = _metadata_log.alloc_cluster();
         if (not cluster_opt) {
             return make_exception_future<size_t>(no_more_space_exception());
         }
@@ -323,12 +323,12 @@ private:
             __builtin_unreachable();
         }).then([this, cluster_id](size_t write_len) -> size_t {
             if (write_len != _metadata_log._cluster_size) {
-                _metadata_log._cluster_allocator.free(cluster_id);
+                _metadata_log.free_cluster(cluster_id);
                 return 0;
             }
             return write_len;
         }).handle_exception([this, cluster_id](std::exception_ptr ptr) {
-            _metadata_log._cluster_allocator.free(cluster_id);
+            _metadata_log.free_cluster(cluster_id);
             return make_exception_future<size_t>(std::move(ptr));
         });
     }

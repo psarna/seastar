@@ -85,9 +85,12 @@ class metadata_log {
     std::unordered_map<cluster_id_t, data_cluster_contents_info> _writable_data_clusters;
     std::unordered_map<cluster_id_t, data_cluster_contents_info> _read_only_data_clusters;
 
-    double _compactness;
+    double _current_compactness = 0;
+    double _min_compactness;
     size_t _max_data_compaction_memory;
+    size_t _compaction_ready_data_size = 0;
     std::vector<cluster_id_t> _compaction_ready_data_clusters;
+    std::set<std::pair<size_t, cluster_id_t> > _compaction_awaiting_data_clusters;
     // Locks are used to ensure metadata consistency while allowing concurrent usage.
     //
     // Whenever one wants to create or delete inode or directory entry, one has to acquire appropriate unique lock for
@@ -211,10 +214,10 @@ class metadata_log {
 public:
     metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment,
             shared_ptr<metadata_to_disk_buffer> cluster_buff, shared_ptr<cluster_writer> data_writer,
-            double compactness, size_t max_data_compaction_memory);
+            double min_compactness, size_t max_data_compaction_memory);
 
     metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment,
-            double compactness, size_t max_data_compaction_memory);
+            double min_compactness, size_t max_data_compaction_memory);
 
     metadata_log(const metadata_log&) = delete;
     metadata_log& operator=(const metadata_log&) = delete;
@@ -244,10 +247,17 @@ private:
     void memory_only_add_dir_entry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name);
     void memory_only_delete_dir_entry(inode_info::directory& dir, std::string entry_name);
 
+    std::optional<cluster_id_t> alloc_cluster() noexcept;
+    future<std::vector<cluster_id_t>> alloc_clusters_wait(size_t count = 1);
+    void free_cluster(cluster_id_t cluster_id) noexcept;
+    void free_clusters(const std::vector<cluster_id_t>& cluster_ids) noexcept;
+
     void finish_writing_data_cluster(cluster_id_t cluster_id);
     void make_data_cluster_writable(cluster_id_t cluster_id);
     void free_writable_data_cluster(cluster_id_t cluster_id) noexcept;
-    void add_cluster_to_compact(cluster_id_t cluster_id, size_t size);
+    void try_compacting_data_cluster(cluster_id_t cluster_id, size_t size);
+    void update_cluster_data_size(cluster_id_t cluster_id, size_t old_size, size_t new_size);
+    void update_compactness();
 
     template<class Func>
     void schedule_background_task(Func&& task) {

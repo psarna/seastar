@@ -215,7 +215,7 @@ future<> data_compaction::allocate_clusters(std::vector<std::vector<compacted_da
     // TODO: we could first try to allocate clusters from shared cluster_allocater and if it fails wait for clusters
     //       from another (destined only for compactions) cluster_allocator
     mlogger.debug("trying to allocate {} clusters", grouped_data_vecs.size());
-    return _metadata_log._cluster_allocator.alloc_wait(grouped_data_vecs.size()).then(
+    return _metadata_log.alloc_clusters_wait(grouped_data_vecs.size()).then(
             [this, grouped_data_vecs = std::move(grouped_data_vecs), memory_data_vecs = std::move(memory_data_vecs)]
             (std::vector<cluster_id_t> cluster_ids) mutable {
         mlogger.debug("destination clusters: {}", cluster_ids);
@@ -248,7 +248,7 @@ future<> data_compaction::save_compacted_data_vecs(std::vector<cluster_id_t> com
             auto cluster_it = _metadata_log._writable_data_clusters.find(cluster_id);
             if (cluster_it == _metadata_log._writable_data_clusters.end()) {
                 mlogger.debug("releasing free data cluster after compaction {}", cluster_id);
-                _metadata_log._cluster_allocator.free(cluster_id);
+                _metadata_log.free_cluster(cluster_id);
             } else if (cluster_it->second.is_empty()) {
                 mlogger.debug("releasing free data cluster after compaction {}", cluster_id);
                 _metadata_log.free_writable_data_cluster(cluster_id);

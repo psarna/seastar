@@ -98,11 +98,11 @@ template<typename BlockDevice = mock_block_device_impl,
         typename MetadataToDiskBuffer = mock_metadata_to_disk_buffer,
         typename ClusterWriter = mock_cluster_writer>
 inline auto init_metadata_log(unit_size_t cluster_size, unit_size_t alignment, cluster_id_t metadata_log_cluster,
-        cluster_range cluster_range, double compactness, size_t max_data_compaction_memory) {
+        cluster_range cluster_range, double min_compactness, size_t max_data_compaction_memory) {
     auto dev_impl = make_shared<BlockDevice>();
     metadata_log log(block_device(dev_impl), cluster_size, alignment,
             make_shared<MetadataToDiskBuffer>(), make_shared<ClusterWriter>(),
-            compactness, max_data_compaction_memory);
+            min_compactness, max_data_compaction_memory);
     log.bootstrap(0, metadata_log_cluster, cluster_range, 1, 0).get();
 
     return std::pair{std::move(dev_impl), std::move(log)};

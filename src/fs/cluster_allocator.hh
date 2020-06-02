@@ -68,6 +68,12 @@ public:
 
     // @p cluster_id has to be allocated using alloc() or alloc_wait()
     void free(const std::vector<cluster_id_t>& cluster_ids) noexcept;
+
+    // Returns the total number of clusters
+    cluster_id_t size() const;
+
+    // Returns the number of allocated clusters
+    cluster_id_t allocated_size() const;
 };
 
 } // namespace seastar::fs
