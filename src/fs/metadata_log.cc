@@ -389,8 +389,10 @@ void metadata_log::try_compacting_data_cluster(cluster_id_t cluster_id, size_t s
             mlogger.debug("Running compaction on clusters {}", _compaction_ready_data_clusters);
             std::vector<cluster_id_t> move_vec = {};
             _compaction_ready_data_clusters.swap(move_vec);
+            _compaction_ready_data_size = 0;
             schedule_background_compaction([this, move_vec = std::move(move_vec)] {return compact_data_clusters(std::move(move_vec));});
         }
+        _compaction_ready_data_size += size;
         _compaction_ready_data_clusters.push_back(cluster_id);
     }
 }
