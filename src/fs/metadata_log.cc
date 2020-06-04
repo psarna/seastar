@@ -81,7 +81,7 @@ metadata_log::metadata_log(block_device device, uint32_t cluster_size, uint32_t 
 , _max_data_compaction_memory(max_data_compaction_memory) {
     assert(is_power_of_2(alignment));
     assert(cluster_size > 0 and cluster_size % alignment == 0);
-    assert(min_compactness > 0 || ((cluster_id_t) (max_data_compaction_memory / (min_compactness * cluster_size))) * (1-min_compactness) >= 1);
+    assert(min_compactness <= 0 || ((cluster_id_t) (max_data_compaction_memory / (min_compactness * cluster_size))) * (1-min_compactness) >= 1);
 }
 
 metadata_log::metadata_log(block_device device, unit_size_t cluster_size, unit_size_t alignment,
