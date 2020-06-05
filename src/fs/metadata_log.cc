@@ -106,6 +106,7 @@ future<> metadata_log::shutdown() {
             flush_log().get();
         } catch (...) {
             mlogger.warn("Error while flushing log during shutdown: {}", std::current_exception());
+            // TODO: some compactions still appear after flush_log() throws.
         }
         _device.close().get();
     });
