@@ -225,7 +225,7 @@ future<> fs_tester::run_execution(run_execution_config& recfg) {
         gate.close().get();
 
         if (exception_occurred) {
-            throw *exception_occurred;
+            std::rethrow_exception(*exception_occurred);
         }
 
         post_test_callback().get();
