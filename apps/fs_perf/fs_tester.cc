@@ -195,9 +195,9 @@ future<> fs_tester::run_execution(run_execution_config& recfg) {
             }
             gate.enter();
             future<> op_future = now();
-            if (3 * total_files_size >= 2 * filesystem_size()) {
+            if (2 * total_files_size >= filesystem_size()) {
                 truncate_mode = true;
-            } else if (3 * total_files_size < filesystem_size()) {
+            } else if (4 * total_files_size < filesystem_size()) {
                 truncate_mode = false;
             }
 
