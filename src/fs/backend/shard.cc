@@ -82,6 +82,7 @@ future<> shard::shutdown() {
             flush_log().get();
         } catch (...) {
             mlogger.warn("Error while flushing log during shutdown: {}", std::current_exception());
+            // FIXME: some compactions may still appear after flush_log().
         }
         _device.close().get();
     });
