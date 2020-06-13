@@ -293,7 +293,7 @@ void fs_tester::setup_fs_state() {
 
     run_execution_config recfg {
         .op_nb_limit = std::nullopt,
-        .written_data_limit = 2 * filesystem_size(),
+        .written_data_limit = filesystem_size(),
         .read_data_limit = std::nullopt,
         .parallelism = 64,
         .write_prob = 1,
