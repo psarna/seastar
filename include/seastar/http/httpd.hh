@@ -95,23 +95,6 @@ public:
 
     future<> start_response();
 
-    static short hex_to_byte(char c);
-
-    /**
-     * Convert a hex encoded 2 bytes substring to char
-     */
-    static char hexstr_to_char(const std::string_view& in, size_t from);
-
-    /**
-     * URL_decode a substring and place it in the given out sstring
-     */
-    static bool url_decode(const std::string_view& in, sstring& out);
-
-    /**
-     * Add a single query parameter to the parameter list
-     */
-    static void add_param(request& req, const std::string_view& param);
-
     /**
      * Set the query parameters in the request objects.
      * query param appear after the question mark and are separated
