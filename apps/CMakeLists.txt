@@ -58,4 +58,5 @@ add_subdirectory (sfs_io_tester)
 
 if (Seastar_EXPERIMENTAL_FS)
   add_subdirectory (fs_perf)
+  add_subdirectory (cluster_reading_perf)
 endif()
