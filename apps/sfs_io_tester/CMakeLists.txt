@@ -20,8 +20,8 @@
 # Copyright (C) 2018 Scylladb, Ltd.
 #
 
-seastar_add_app (io_tester
-  SOURCES io_tester.cc)
+seastar_add_app (sfs_io_tester
+  SOURCES sfs_io_tester.cc)
 
-target_link_libraries (app_io_tester
-  PRIVATE yaml-cpp::yaml-cpp)
+target_link_libraries (app_sfs_io_tester
+        PRIVATE yaml-cpp::yaml-cpp)
