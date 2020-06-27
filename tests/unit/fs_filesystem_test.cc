@@ -40,7 +40,7 @@ using namespace seastar;
 using namespace fs;
 
 constexpr auto device_path = "/tmp/seastarfs";
-constexpr auto device_size = 16 * MB;
+constexpr auto device_size = 32 * MB;
 
 constexpr uint64_t version = 1;
 constexpr unit_size_t cluster_size = 1 * MB;
@@ -237,7 +237,7 @@ SEASTAR_THREAD_TEST_CASE(valid_path_mkfs_test) {
 
 SEASTAR_THREAD_TEST_CASE(valid_cluster_distribution_mkfs_test) {
     const auto tf = temporary_file(device_path);
-    tf.truncate(device_size);
+    tf.truncate(16 * MB);
 
     const std::vector<bootstrap_record::shard_info> shards_info({
         { 1,  { 1,  4  } }, // 3
