@@ -687,6 +687,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/backend/metadata_log/to_disk_buffer.hh
     src/fs/backend/shard.cc
     src/fs/backend/shard.hh
+    src/fs/backend/unlink_or_remove_file.hh
     src/fs/bootstrap_record.cc
     src/fs/bootstrap_record.hh
     src/fs/clock.hh

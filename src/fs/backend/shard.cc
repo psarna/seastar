@@ -26,6 +26,7 @@
 #include "fs/backend/link_file.hh"
 #include "fs/backend/metadata_log/entries.hh"
 #include "fs/backend/shard.hh"
+#include "fs/backend/unlink_or_remove_file.hh"
 #include "fs/cluster_utils.hh"
 #include "fs/unix_metadata.hh"
 #include "seastar/core/thread.hh"
@@ -119,6 +120,18 @@ void shard::memory_only_create_dentry(inode_info::directory& dir, inode_t entry_
     bool inserted = dir.entries.emplace(std::move(entry_name), entry_inode).second;
     assert(inserted);
     ++it->second.links_count;
+}
+
+void shard::memory_only_delete_dentry(inode_info::directory& dir, const std::string& entry_name) {
+    auto it = dir.entries.find(entry_name);
+    assert(it != dir.entries.end());
+
+    auto entry_it = _inodes.find(it->second);
+    assert(entry_it != _inodes.end());
+    assert(entry_it->second.is_linked());
+
+    --entry_it->second.links_count;
+    dir.entries.erase(it);
 }
 
 void shard::schedule_flush_of_curr_cluster() {
@@ -302,6 +315,18 @@ future<> shard::link_file(std::string source, std::string destination) {
     return path_lookup(std::move(source)).then([this, destination = std::move(destination)](inode_t inode) {
         return link_file(inode, std::move(destination));
     });
+}
+
+future<> shard::unlink_file(std::string path) {
+    return unlink_or_remove_file_operation::perform(*this, std::move(path), remove_semantics::FILE_ONLY);
+}
+
+future<> shard::remove_directory(std::string path) {
+    return unlink_or_remove_file_operation::perform(*this, std::move(path), remove_semantics::DIR_ONLY);
+}
+
+future<> shard::remove(std::string path) {
+    return unlink_or_remove_file_operation::perform(*this, std::move(path), remove_semantics::FILE_OR_DIR);
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,

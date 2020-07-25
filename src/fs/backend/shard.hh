@@ -149,6 +149,7 @@ class shard {
     friend class create_and_open_unlinked_file_operation;
     friend class create_file_operation;
     friend class link_file_operation;
+    friend class unlink_or_remove_file_operation;
 
 public:
     shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment,
@@ -173,9 +174,13 @@ private:
     inode_info& memory_only_create_inode(inode_t inode, unix_metadata metadata);
     void memory_only_delete_inode(inode_t inode);
     void memory_only_create_dentry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name);
+    void memory_only_delete_dentry(inode_info::directory& dir, const std::string& entry_name);
 
-    template<class Func>
+    template<class Func> // TODO: use noncopyable_function
     void schedule_background_task(Func&& task) {
+        // FIXME: bound concurrency, but be careful in the caller of this function, as now following assumption is taken
+        //        in the caller: scheduling background task is atomic and not asynchronous, thus no locking is required
+        //        on resources because no other continuation will be scheduled
         _background_futures = when_all_succeed(_background_futures.get_future(), std::forward<Func>(task));
     }
 
@@ -300,6 +305,13 @@ public:
 
     // Creates name (@p destination) for a file (not directory) @p source
     future<> link_file(std::string source, std::string destination);
+
+    future<> unlink_file(std::string path);
+
+    future<> remove_directory(std::string path);
+
+    // Removes empty directory or unlinks file
+    future<> remove(std::string path);
 
     // All disk-related errors will be exposed here
     future<> flush_log() {

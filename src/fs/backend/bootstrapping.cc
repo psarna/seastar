@@ -435,12 +435,43 @@ future<> bootstrapping::bootstrap_entry<mle::create_inode_as_dentry>(mle::create
 
 template<>
 future<> bootstrapping::bootstrap_entry<mle::delete_dentry>(mle::delete_dentry& entry) {
-    return make_exception_future(std::runtime_error("Not implemented"));
+    mlogger.debug("Entry: delete dentry in {}: \"{}\"", entry.dir_inode, entry.name);
+    if (!inode_exists(entry.dir_inode)) {
+        mlogger.debug("^ Error: dir inode does not exist");
+        return invalid_entry_exception();
+    }
+
+    auto& dir_inode_info = _shard._inodes.at(entry.dir_inode);
+    if (!dir_inode_info.is_directory()) {
+        mlogger.debug("^ Error: dir inode is not a directory");
+        return invalid_entry_exception();
+    }
+    auto& dir = dir_inode_info.get_directory();
+    if (dir.entries.find(entry.name) == dir.entries.end()) {
+        mlogger.debug("^ Error: dentry does not exist");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_delete_dentry(dir, entry.name);
+    // TODO: Maybe time_ns for modifying directory?
+    return now();
 }
 
 template<>
 future<> bootstrapping::bootstrap_entry<mle::delete_inode_and_dentry>(mle::delete_inode_and_dentry& entry) {
-    return make_exception_future(std::runtime_error("Not implemented"));
+    mlogger.debug("Compound entry: delete inode {} and delete dentry", entry.di.inode);
+    // We have 2 cases:
+    // - deleting dir entry and inode that it points to
+    // - deleting dir entry and inode that are unrelated
+    // Third case: deleting dir entry and inode of this dir is not possible as we do not permit unlinked directories
+    if (!delete_inode_is_valid(entry.di)) {
+        return invalid_entry_exception();
+    }
+
+    return bootstrap_entry(entry.dd).then([this, &entry] {
+        assert(delete_inode_is_valid(entry.di));
+        _shard.memory_only_delete_inode(entry.di.inode);
+    });
 }
 
 bool bootstrapping::inode_exists(inode_t inode) const noexcept {
