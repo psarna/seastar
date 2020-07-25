@@ -382,6 +382,17 @@ if (Seastar_EXPERIMENTAL_FS)
       fs_backend_metadata_log_entries_random.cc
       fs_backend_metadata_log_to_disk_buffer_mocker_test.cc
       fs_random.cc)
+  seastar_add_test (fs_backend_shard_bootstrap
+    SOURCES
+      fs_backend_shard_bootstrap_test.cc
+      fs_backend_shard_tester.cc
+      fs_block_device_mocker.cc)
+  seastar_add_test (fs_backend_write
+    SOURCES
+      fs_backend_shard_tester.cc
+      fs_block_device_mocker.cc
+      fs_random.cc
+      fs_backend_write_test.cc)
   seastar_add_test (fs_bootstrap_record
     SOURCES
       fs_block_device_mocker.cc

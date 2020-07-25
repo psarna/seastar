@@ -36,10 +36,13 @@ shard_tester::shard_tester(const struct shard_tester::options& options)
 , device(*device_holder.get())
 , ml_buffers_holder(make_shared<decltype(ml_buffers_holder)::element_type>())
 , ml_buffers(*ml_buffers_holder.get())
+, c_writers_holder(make_shared<decltype(c_writers_holder)::element_type>())
+, c_writers(*c_writers_holder.get())
 , clock_holder(make_shared<FreezingClock>())
 , clock(*clock_holder.get())
 , shard(block_device(device_holder), options.cluster_size, options.alignment,
-        seastar::make_shared<metadata_log::to_disk_buffer_mocker>(ml_buffers_holder.get()), clock_holder)
+        seastar::make_shared<metadata_log::to_disk_buffer_mocker>(ml_buffers_holder.get()),
+        seastar::make_shared<cluster_writer_mocker>(c_writers_holder.get()), clock_holder)
 {
     bootstrap_shard();
 }

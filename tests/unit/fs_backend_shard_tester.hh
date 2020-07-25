@@ -23,6 +23,7 @@
 
 #include "fs/backend/metadata_log/to_disk_buffer.hh"
 #include "fs/backend/shard.hh"
+#include "fs_backend_cluster_writer_mocker.hh"
 #include "fs_backend_metadata_log_to_disk_buffer_mocker.hh"
 #include "fs_block_device_mocker.hh"
 #include "fs_freezing_clock.hh"
@@ -60,6 +61,8 @@ public:
     block_device_mocker_impl& device;
     shared_ptr<std::vector<shared_ptr<metadata_log::to_disk_buffer_mocker>>> ml_buffers_holder;
     std::vector<shared_ptr<metadata_log::to_disk_buffer_mocker>>& ml_buffers;
+    shared_ptr<std::vector<shared_ptr<cluster_writer_mocker>>> c_writers_holder;
+    std::vector<shared_ptr<cluster_writer_mocker>>& c_writers;
     shared_ptr<FreezingClock> clock_holder;
     FreezingClock& clock;
     class shard shard;
@@ -72,6 +75,36 @@ public:
 
     metadata_log::to_disk_buffer_mocker& curr_ml_buff() const noexcept {
         return *ml_buffers.back().get();
+    }
+
+    cluster_writer_mocker& curr_c_writer() const noexcept {
+        return *c_writers.back().get();
+    }
+
+    inode_t create_and_open_file(std::string name = "tmp") {
+        shard.create_file("/" + name, file_permissions::default_dir_permissions).get0();
+        return shard.open_file("/" + name).get0();
+    }
+
+    void read(inode_t inode, file_offset_t pos, void* dest, size_t len) {
+        auto read = shard.read(inode, pos, dest, len).get0();
+        if (read != len) {
+            BOOST_FAIL(format("Partial read ({} of {} bytes)", len, read));
+        }
+    }
+
+    std::string read(inode_t inode, file_offset_t pos, size_t len) {
+        std::string res(len, '\0');
+        random_overwrite(res.data(), len);
+        read(inode, pos, res.data(), len);
+        return res;
+    }
+
+    void write(inode_t inode, file_offset_t pos, const void* src, size_t len) {
+        auto written = shard.write(inode, pos, src, len).get0();
+        if (written != len) {
+            BOOST_FAIL(format("Partial write ({} of {} bytes)", len, written));
+        }
     }
 };
 
