@@ -27,6 +27,7 @@
 #include "fs/backend/metadata_log/entries.hh"
 #include "fs/backend/read.hh"
 #include "fs/backend/shard.hh"
+#include "fs/backend/truncate.hh"
 #include "fs/backend/unlink_or_remove_file.hh"
 #include "fs/backend/write.hh"
 #include "fs/cluster_utils.hh"
@@ -178,6 +179,30 @@ void shard::memory_only_update_mtime(inode_t inode, decltype(unix_metadata::mtim
     // ctime should be updated when contents is modified
     if (it->second.metadata.ctime_ns < mtime_ns) {
         it->second.metadata.ctime_ns = mtime_ns;
+    }
+}
+
+void shard::memory_only_truncate(inode_t inode, file_offset_t size) {
+    auto it = _inodes.find(inode);
+    assert(it != _inodes.end());
+    assert(it->second.is_file());
+    auto& file = it->second.get_file();
+
+    auto file_size = file.size();
+    if (size > file_size) {
+        file.data.emplace(file_size, inode_data_vec{
+            .data_range = {
+                .beg = file_size,
+                .end = size,
+            },
+            .data_location = inode_data_vec::hole_data{},
+        });
+    } else {
+        // TODO: for compaction: update used inode_data_vec
+        cut_out_data_range(file, {
+            size,
+            std::numeric_limits<decltype(file_range::end)>::max()
+        });
     }
 }
 
@@ -456,6 +481,10 @@ future<size_t> shard::read(inode_t inode, file_offset_t pos, void* buffer, size_
 future<size_t> shard::write(inode_t inode, file_offset_t pos, const void* buffer, size_t len,
         const io_priority_class& pc) {
     return write_operation::perform(*this, inode, pos, buffer, len, pc);
+}
+
+future<> shard::truncate(inode_t inode, file_offset_t size) {
+    return truncate_operation::perform(*this, inode, size);
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,

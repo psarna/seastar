@@ -409,7 +409,19 @@ future<> bootstrapping::bootstrap_entry<mle::large_write>(mle::large_write& entr
 
 template<>
 future<> bootstrapping::bootstrap_entry<mle::truncate>(mle::truncate& entry) {
-    return make_exception_future(std::runtime_error("Not implemented"));
+    mlogger.debug("Entry: truncate {} to size {}", entry.inode, entry.size);
+    if (!inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: inode does not exist");
+        return invalid_entry_exception();
+    }
+    if (!_shard._inodes[entry.inode].is_file()) {
+        mlogger.debug("^ Error: inode is not a regular file");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_truncate(entry.inode, entry.size);
+    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
+    return now();
 }
 
 struct create_dentry_with_flags {

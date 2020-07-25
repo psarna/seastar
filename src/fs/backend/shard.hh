@@ -153,6 +153,7 @@ class shard {
     friend class create_file_operation;
     friend class link_file_operation;
     friend class read_operation;
+    friend class truncate_operation;
     friend class unlink_or_remove_file_operation;
     friend class write_operation;
 
@@ -186,6 +187,7 @@ private:
     void memory_only_small_write(inode_t inode, disk_offset_t offset, temporary_buffer<uint8_t> data);
     void memory_only_disk_write(inode_t inode, file_offset_t file_offset, disk_offset_t disk_offset, size_t write_len);
     void memory_only_update_mtime(inode_t inode, decltype(unix_metadata::mtime_ns) mtime_ns);
+    void memory_only_truncate(inode_t inode, disk_offset_t size);
     void memory_only_create_dentry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name);
     void memory_only_delete_dentry(inode_info::directory& dir, const std::string& entry_name);
 
@@ -337,6 +339,9 @@ public:
 
     future<size_t> write(inode_t inode, file_offset_t pos, const void* buffer, size_t len,
             const io_priority_class& pc = default_priority_class());
+
+    // Truncates a file or extends it with a "hole" data_vec to a specified size
+    future<> truncate(inode_t inode, file_offset_t size);
 
     // All disk-related errors will be exposed here
     future<> flush_log() {

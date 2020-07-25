@@ -689,6 +689,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/backend/read.hh
     src/fs/backend/shard.cc
     src/fs/backend/shard.hh
+    src/fs/backend/truncate.hh
     src/fs/backend/unlink_or_remove_file.hh
     src/fs/backend/write.hh
     src/fs/bootstrap_record.cc
