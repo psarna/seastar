@@ -670,16 +670,21 @@ if (Seastar_EXPERIMENTAL_FS)
     # SeastarFS source files
     include/seastar/fs/bitwise.hh
     include/seastar/fs/block_device.hh
+    include/seastar/fs/exceptions.hh
     include/seastar/fs/overloaded.hh
     include/seastar/fs/range.hh
     include/seastar/fs/unit_types.hh
     src/fs/backend/cluster_allocator.cc
     src/fs/backend/cluster_allocator.hh
+    src/fs/backend/inode_info.hh
     src/fs/backend/metadata_log/entries.cc
     src/fs/backend/metadata_log/entries.hh
     src/fs/backend/metadata_log/to_disk_buffer.hh
+    src/fs/backend/shard.cc
+    src/fs/backend/shard.hh
     src/fs/bootstrap_record.cc
     src/fs/bootstrap_record.hh
+    src/fs/clock.hh
     src/fs/cluster_utils.hh
     src/fs/crc.hh
     src/fs/inode_utils.hh
