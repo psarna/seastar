@@ -351,6 +351,33 @@ future<inode_t> shard::open_file(std::string path) {
     });
 }
 
+future<> shard::close_file(inode_t inode) {
+    auto inode_it = _inodes.find(inode);
+    if (inode_it == _inodes.end()) {
+        return make_exception_future(invalid_inode_exception());
+    }
+    inode_info* inode_info = &inode_it->second;
+    if (inode_info->is_directory()) {
+        return make_exception_future(is_directory_exception());
+    }
+
+
+    return _locks.with_lock(shard::locks::shared{.inode = inode}, [this, inode, inode_info] {
+        if (!inode_exists(inode)) {
+            return make_exception_future(operation_became_invalid_exception());
+        }
+
+        assert(inode_info->is_open());
+
+        --inode_info->opened_files_count;
+        if (!inode_info->is_linked() && !inode_info->is_open()) {
+            // Unlinked and not open file should be removed
+            schedule_attempt_to_delete_inode(inode);
+        }
+        return now();
+    });
+}
+
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,
 // then it should be possible to compact some data (e.g. by truncating a file) via top-level interface and retrying the flush()
 // without a ENOSPACE error. In particular if we delete all files after ENOSPACE it should be successful. It becomes especially
