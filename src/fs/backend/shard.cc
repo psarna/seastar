@@ -33,6 +33,7 @@
 #include "fs/cluster_utils.hh"
 #include "fs/unix_metadata.hh"
 #include "seastar/core/thread.hh"
+#include "seastar/fs/stat.hh"
 
 namespace mle = seastar::fs::backend::metadata_log::entries;
 
@@ -384,6 +385,46 @@ file_offset_t shard::file_size(inode_t inode) const {
             throw invalid_inode_exception();
         }
     }, it->second.contents);
+}
+
+stat_data shard::stat(inode_t inode) const {
+    auto it = _inodes.find(inode);
+    if (it == _inodes.end()) {
+        throw invalid_inode_exception();
+    }
+
+    const inode_info& inode_info = it->second;
+    return {
+        .type = std::visit(overloaded{
+            [](const inode_info::file&) { return directory_entry_type::regular; },
+            [](const inode_info::directory&) { return directory_entry_type::directory; },
+        }, inode_info.contents),
+        .perms = inode_info.metadata.perms,
+        .uid = inode_info.metadata.uid,
+        .gid = inode_info.metadata.gid,
+        .time_born = std::chrono::system_clock::time_point(std::chrono::nanoseconds(inode_info.metadata.btime_ns)),
+        .time_modified = std::chrono::system_clock::time_point(std::chrono::nanoseconds(inode_info.metadata.mtime_ns)),
+        .time_changed = std::chrono::system_clock::time_point(std::chrono::nanoseconds(inode_info.metadata.ctime_ns)),
+    };
+}
+
+stat_data shard::stat(const std::string& path) const {
+    return std::visit(overloaded{
+        [](path_lookup_error error) -> stat_data {
+            switch (error) {
+            case path_lookup_error::NOT_ABSOLUTE:
+                throw path_is_not_absolute_exception();
+            case path_lookup_error::NO_ENTRY:
+                throw no_such_file_or_directory_exception();
+            case path_lookup_error::NOT_DIR:
+                throw path_component_not_directory_exception();
+            }
+            __builtin_unreachable();
+        },
+        [this](inode_t inode) {
+            return stat(inode);
+        }
+    }, do_path_lookup(path));
 }
 
 future<> shard::create_file(std::string path, file_permissions perms) {

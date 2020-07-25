@@ -673,6 +673,7 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/exceptions.hh
     include/seastar/fs/overloaded.hh
     include/seastar/fs/range.hh
+    include/seastar/fs/stat.hh
     include/seastar/fs/unit_types.hh
     src/fs/backend/bootstrapping.cc
     src/fs/backend/bootstrapping.hh

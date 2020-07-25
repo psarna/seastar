@@ -30,6 +30,7 @@
 #include "fs/value_shared_lock.hh"
 #include "seastar/core/shared_future.hh"
 #include "seastar/fs/exceptions.hh"
+#include "seastar/fs/stat.hh"
 #include "seastar/fs/unit_types.hh"
 
 namespace seastar::fs::backend {
@@ -303,6 +304,10 @@ public:
             });
         });
     }
+
+    fs::stat_data stat(inode_t inode) const;
+
+    fs::stat_data stat(const std::string& path) const;
 
     // Returns size of the file or throws exception iff @p inode is invalid
     file_offset_t file_size(inode_t inode) const;
