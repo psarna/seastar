@@ -375,7 +375,15 @@ future<> bootstrapping::bootstrap_entry<create_dentry_with_flags>(create_dentry_
 
 template<>
 future<> bootstrapping::bootstrap_entry<mle::create_dentry>(mle::create_dentry& entry) {
-    return make_exception_future(std::runtime_error("Not implemented"));
+    create_dentry_with_flags new_entry = {
+        .inode = entry.inode,
+        .name = entry.name,
+        .dir_inode = entry.dir_inode,
+        .allow_linking_directory = false, // Only files may be linked as not to create cycles (directories are
+                                          // created and linked using mle::create_inode_as_dentry
+    };
+    // Taking reference here is OK, because new_entry won't be used as soon as future<> will be constructed
+    return bootstrap_entry(new_entry);
 }
 
 template<>

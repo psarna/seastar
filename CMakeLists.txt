@@ -681,6 +681,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/backend/create_and_open_unlinked_file.hh
     src/fs/backend/create_file.hh
     src/fs/backend/inode_info.hh
+    src/fs/backend/link_file.hh
     src/fs/backend/metadata_log/entries.cc
     src/fs/backend/metadata_log/entries.hh
     src/fs/backend/metadata_log/to_disk_buffer.hh

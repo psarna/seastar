@@ -23,6 +23,7 @@
 #include "fs/backend/create_and_open_unlinked_file.hh"
 #include "fs/backend/create_file.hh"
 #include "fs/backend/inode_info.hh"
+#include "fs/backend/link_file.hh"
 #include "fs/backend/metadata_log/entries.hh"
 #include "fs/backend/shard.hh"
 #include "fs/cluster_utils.hh"
@@ -271,6 +272,16 @@ future<inode_t> shard::create_and_open_unlinked_file(file_permissions perms) {
 
 future<> shard::create_directory(std::string path, file_permissions perms) {
     return create_file_operation::perform(*this, std::move(path), std::move(perms), create_semantics::CREATE_DIR).discard_result();
+}
+
+future<> shard::link_file(inode_t inode, std::string path) {
+    return link_file_operation::perform(*this, inode, std::move(path));
+}
+
+future<> shard::link_file(std::string source, std::string destination) {
+    return path_lookup(std::move(source)).then([this, destination = std::move(destination)](inode_t inode) {
+        return link_file(inode, std::move(destination));
+    });
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,
