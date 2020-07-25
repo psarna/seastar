@@ -387,6 +387,12 @@ if (Seastar_EXPERIMENTAL_FS)
       fs_backend_shard_bootstrap_test.cc
       fs_backend_shard_tester.cc
       fs_block_device_mocker.cc)
+  seastar_add_test (fs_backend_truncate
+    SOURCES
+      fs_backend_shard_tester.cc
+      fs_block_device_mocker.cc
+      fs_random.cc
+      fs_backend_truncate_test.cc)
   seastar_add_test (fs_backend_write
     SOURCES
       fs_backend_shard_tester.cc
