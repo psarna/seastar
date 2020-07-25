@@ -370,6 +370,18 @@ if (Seastar_EXPERIMENTAL_FS)
     SOURCES
       fs_backend_metadata_log_entries_test.cc
       fs_random.cc)
+  seastar_add_test (fs_backend_metadata_log_to_disk_buffer
+    SOURCES
+      fs_block_device_mocker.cc
+      fs_backend_metadata_log_entries_random.cc
+      fs_backend_metadata_log_to_disk_buffer_test.cc
+      fs_random.cc)
+  seastar_add_test (fs_backend_metadata_log_to_disk_buffer_mocker
+    SOURCES
+      fs_block_device_mocker.cc
+      fs_backend_metadata_log_entries_random.cc
+      fs_backend_metadata_log_to_disk_buffer_mocker_test.cc
+      fs_random.cc)
   seastar_add_test (fs_bootstrap_record
     SOURCES
       fs_block_device_mocker.cc
@@ -377,6 +389,10 @@ if (Seastar_EXPERIMENTAL_FS)
   seastar_add_test (fs_path
     KIND BOOST
     SOURCES fs_path_test.cc)
+  seastar_add_test (fs_to_disk_buffer
+    SOURCES
+      fs_block_device_mocker.cc
+      fs_to_disk_buffer_test.cc)
   seastar_add_test (fs_val_or_err
     KIND BOOST
     SOURCES fs_val_or_err_test.cc)
