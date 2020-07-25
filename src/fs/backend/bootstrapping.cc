@@ -287,7 +287,20 @@ future<> bootstrapping::bootstrap_entry<mle::next_metadata_cluster>(mle::next_me
 
 template<>
 future<> bootstrapping::bootstrap_entry<mle::create_inode>(mle::create_inode& entry) {
-    return make_exception_future(std::runtime_error("Not implemented"));
+    mlogger.debug("Entry: create inode {} of type {}", entry.inode, [&entry] {
+        switch (entry.metadata.ftype) {
+        case file_type::REGULAR_FILE: return "REG";
+        case file_type::DIRECTORY: return "DIR";
+        }
+        return "???";
+    }());
+    if (inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: inode already exist");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_create_inode(entry.inode, entry.metadata);
+    return now();
 }
 
 template<>

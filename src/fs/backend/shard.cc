@@ -20,6 +20,7 @@
  */
 
 #include "fs/backend/bootstrapping.hh"
+#include "fs/backend/create_and_open_unlinked_file.hh"
 #include "fs/backend/inode_info.hh"
 #include "fs/backend/metadata_log/entries.hh"
 #include "fs/backend/shard.hh"
@@ -70,6 +71,23 @@ future<> shard::shutdown() {
         }
         _device.close().get();
     });
+}
+
+inode_info& shard::memory_only_create_inode(inode_t inode, unix_metadata metadata) {
+    assert(_inodes.count(inode) == 0);
+    return _inodes.emplace(inode, inode_info{
+        .opened_files_count = 0,
+        .links_count = 0,
+        .metadata = metadata,
+        .contents = [&]() -> decltype(inode_info::contents) {
+            switch (metadata.ftype) {
+            case file_type::DIRECTORY: return inode_info::directory{};
+            case file_type::REGULAR_FILE: return inode_info::file{};
+            }
+
+            assert(false); // Invalid file_type
+        }()
+    }).first->second;
 }
 
 void shard::schedule_flush_of_curr_cluster() {
@@ -207,6 +225,10 @@ file_offset_t shard::file_size(inode_t inode) const {
             throw invalid_inode_exception();
         }
     }, it->second.contents);
+}
+
+future<inode_t> shard::create_and_open_unlinked_file(file_permissions perms) {
+    return create_and_open_unlinked_file_operation::perform(*this, std::move(perms));
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,

@@ -678,6 +678,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/backend/bootstrapping.hh
     src/fs/backend/cluster_allocator.cc
     src/fs/backend/cluster_allocator.hh
+    src/fs/backend/create_and_open_unlinked_file.hh
     src/fs/backend/inode_info.hh
     src/fs/backend/metadata_log/entries.cc
     src/fs/backend/metadata_log/entries.hh

@@ -146,6 +146,8 @@ class shard {
 
     friend class bootstrapping;
 
+    friend class create_and_open_unlinked_file_operation;
+
 public:
     shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment,
             shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf, shared_ptr<Clock> clock);
@@ -165,6 +167,8 @@ private:
     bool inode_exists(inode_t inode) const noexcept {
         return _inodes.count(inode) != 0;
     }
+
+    inode_info& memory_only_create_inode(inode_t inode, unix_metadata metadata);
 
     template<class Func>
     void schedule_background_task(Func&& task) {
@@ -276,6 +280,8 @@ public:
 
     // Returns size of the file or throws exception iff @p inode is invalid
     file_offset_t file_size(inode_t inode) const;
+
+    future<inode_t> create_and_open_unlinked_file(file_permissions perms);
 
     // All disk-related errors will be exposed here
     future<> flush_log() {
