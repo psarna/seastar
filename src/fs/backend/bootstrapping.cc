@@ -342,7 +342,35 @@ struct create_dentry_with_flags {
 
 template<>
 future<> bootstrapping::bootstrap_entry<create_dentry_with_flags>(create_dentry_with_flags& entry) {
-    return make_exception_future(std::runtime_error("Not implemented"));
+    mlogger.debug("Entry: create dentry in {}: \"{}\" -> {}", entry.dir_inode, entry.name, entry.inode);
+    if (!inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: dentry inode does not exist");
+        return invalid_entry_exception();
+    }
+    if (!inode_exists(entry.dir_inode)) {
+        mlogger.debug("^ Error: dir inode does not exist");
+        return invalid_entry_exception();
+    }
+
+    auto& inode_info = _shard._inodes.at(entry.inode);
+    auto& dir_inode_info = _shard._inodes.at(entry.dir_inode);
+    if (!entry.allow_linking_directory && inode_info.is_directory()) {
+        mlogger.debug("^ Error: cannot link directory");
+        return invalid_entry_exception();
+    }
+    if (!dir_inode_info.is_directory()) {
+        mlogger.debug("^ Error: dir inode is not a directory");
+        return invalid_entry_exception();
+    }
+    auto& dir = dir_inode_info.get_directory();
+    if (dir.entries.count(entry.name) != 0) {
+        mlogger.debug("^ Error: name is taken by other dentry");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_create_dentry(dir, entry.inode, std::move(entry.name));
+    // TODO: Maybe time_ns for modifying directory?
+    return now();
 }
 
 template<>
@@ -352,7 +380,26 @@ future<> bootstrapping::bootstrap_entry<mle::create_dentry>(mle::create_dentry& 
 
 template<>
 future<> bootstrapping::bootstrap_entry<mle::create_inode_as_dentry>(mle::create_inode_as_dentry& entry) {
-    return make_exception_future(std::runtime_error("Not implemented"));
+    mlogger.debug("Compound entry: create inode as dentry");
+    return bootstrap_entry(entry.inode).then([this, &entry] {
+        deferred_action rollback = [this, inode = entry.inode.inode] {
+            _shard.memory_only_delete_inode(inode);
+        };
+
+        create_dentry_with_flags new_entry = {
+            .inode = entry.inode.inode,
+            .name = entry.name,
+            .dir_inode = entry.dir_inode,
+            .allow_linking_directory = true,
+        };
+
+        // Taking reference here is OK, because new_entry won't be used as soon as future<> will be constructed
+        return bootstrap_entry(new_entry).then([rollback = std::move(rollback)]() mutable {
+            rollback.cancel();
+        });
+    });
+
+    return now();
 }
 
 template<>

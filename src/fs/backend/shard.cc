@@ -21,6 +21,7 @@
 
 #include "fs/backend/bootstrapping.hh"
 #include "fs/backend/create_and_open_unlinked_file.hh"
+#include "fs/backend/create_file.hh"
 #include "fs/backend/inode_info.hh"
 #include "fs/backend/metadata_log/entries.hh"
 #include "fs/backend/shard.hh"
@@ -88,6 +89,35 @@ inode_info& shard::memory_only_create_inode(inode_t inode, unix_metadata metadat
             assert(false); // Invalid file_type
         }()
     }).first->second;
+}
+
+void shard::memory_only_delete_inode(inode_t inode) {
+    auto it = _inodes.find(inode);
+    assert(it != _inodes.end());
+    assert(!it->second.is_open());
+    assert(!it->second.is_linked());
+
+    std::visit(overloaded{
+        [](const inode_info::directory& dir) {
+            assert(dir.entries.empty());
+        },
+        [](const inode_info::file&) {
+            // TODO: for compaction: update used inode_data_vec
+        }
+    }, it->second.contents);
+
+    _inodes.erase(it);
+}
+
+void shard::memory_only_create_dentry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name) {
+    auto it = _inodes.find(entry_inode);
+    assert(it != _inodes.end());
+    // Directory may only be linked once (to avoid creating cycles)
+    assert(!it->second.is_directory() || !it->second.is_linked());
+
+    bool inserted = dir.entries.emplace(std::move(entry_name), entry_inode).second;
+    assert(inserted);
+    ++it->second.links_count;
 }
 
 void shard::schedule_flush_of_curr_cluster() {
@@ -227,8 +257,20 @@ file_offset_t shard::file_size(inode_t inode) const {
     }, it->second.contents);
 }
 
+future<> shard::create_file(std::string path, file_permissions perms) {
+    return create_file_operation::perform(*this, std::move(path), std::move(perms), create_semantics::CREATE_FILE).discard_result();
+}
+
+future<inode_t> shard::create_and_open_file(std::string path, file_permissions perms) {
+    return create_file_operation::perform(*this, std::move(path), std::move(perms), create_semantics::CREATE_AND_OPEN_FILE);
+}
+
 future<inode_t> shard::create_and_open_unlinked_file(file_permissions perms) {
     return create_and_open_unlinked_file_operation::perform(*this, std::move(perms));
+}
+
+future<> shard::create_directory(std::string path, file_permissions perms) {
+    return create_file_operation::perform(*this, std::move(path), std::move(perms), create_semantics::CREATE_DIR).discard_result();
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,

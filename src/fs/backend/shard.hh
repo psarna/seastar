@@ -147,6 +147,7 @@ class shard {
     friend class bootstrapping;
 
     friend class create_and_open_unlinked_file_operation;
+    friend class create_file_operation;
 
 public:
     shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment,
@@ -169,6 +170,8 @@ private:
     }
 
     inode_info& memory_only_create_inode(inode_t inode, unix_metadata metadata);
+    void memory_only_delete_inode(inode_t inode);
+    void memory_only_create_dentry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name);
 
     template<class Func>
     void schedule_background_task(Func&& task) {
@@ -281,7 +284,13 @@ public:
     // Returns size of the file or throws exception iff @p inode is invalid
     file_offset_t file_size(inode_t inode) const;
 
+    future<> create_file(std::string path, file_permissions perms);
+
+    future<inode_t> create_and_open_file(std::string path, file_permissions perms);
+
     future<inode_t> create_and_open_unlinked_file(file_permissions perms);
+
+    future<> create_directory(std::string path, file_permissions perms);
 
     // All disk-related errors will be exposed here
     future<> flush_log() {
