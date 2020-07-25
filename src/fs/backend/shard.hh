@@ -224,6 +224,8 @@ private:
         __builtin_unreachable();
     }
 
+    void schedule_attempt_to_delete_inode(inode_t inode);
+
     enum class path_lookup_error {
         NOT_ABSOLUTE, // a path is not absolute
         NO_ENTRY, // no such file or directory

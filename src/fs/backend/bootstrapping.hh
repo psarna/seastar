@@ -80,6 +80,8 @@ private:
     template<class Entry>
     future<> bootstrap_entry(Entry& entry);
 
+    bool delete_inode_is_valid(const metadata_log::entries::delete_inode& entry) const noexcept;
+
     bool inode_exists(inode_t inode) const noexcept;
 
     future<> bootstrap_checkpointed_data();

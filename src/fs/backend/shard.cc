@@ -164,6 +164,26 @@ shard::flush_result shard::schedule_flush_of_curr_cluster_and_change_it_to_new_o
     return flush_result::DONE;
 }
 
+void shard::schedule_attempt_to_delete_inode(inode_t inode) {
+    return schedule_background_task([this, inode] {
+        auto it = _inodes.find(inode);
+        if (it == _inodes.end() || it->second.is_linked() || it->second.is_open()) {
+            return now(); // Scheduled delete became invalid
+        }
+
+        switch (append_metadata_log(mle::delete_inode{.inode = inode})) {
+        case append_result::TOO_BIG:
+            assert(false && "ondisk entry cannot be too big");
+        case append_result::NO_SPACE:
+            return make_exception_future(no_more_space_exception());
+        case append_result::APPENDED:
+            memory_only_delete_inode(inode);
+            return now();
+        }
+        __builtin_unreachable();
+    });
+}
+
 std::variant<inode_t, shard::path_lookup_error> shard::do_path_lookup(const std::string& path) const noexcept {
     if (path.empty() || path[0] != '/') {
         return path_lookup_error::NOT_ABSOLUTE;

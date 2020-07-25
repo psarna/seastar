@@ -303,9 +303,32 @@ future<> bootstrapping::bootstrap_entry<mle::create_inode>(mle::create_inode& en
     return now();
 }
 
+bool bootstrapping::delete_inode_is_valid(const mle::delete_inode& entry) const noexcept {
+    if (!inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: inode does not exist");
+        return false;
+    }
+    const inode_info& inode_info = _shard._inodes.at(entry.inode);
+    if (inode_info.is_directory() && !inode_info.get_directory().entries.empty()) {
+        mlogger.debug("^ Error: cannot delete inode that is a non-empty directory");
+        return false;
+    }
+    if (inode_info.links_count > 0) {
+        mlogger.debug("^ Error: only unlinked inodes may be deleted");
+        return false;
+    }
+
+    return true;
+}
+
 template<>
 future<> bootstrapping::bootstrap_entry<mle::delete_inode>(mle::delete_inode& entry) {
-    return make_exception_future(std::runtime_error("Not implemented"));
+    mlogger.debug("Entry: delete inode {}", entry.inode);
+    if (!delete_inode_is_valid(entry)) {
+        return invalid_entry_exception();
+    }
+    _shard.memory_only_delete_inode(entry.inode);
+    return now();
 }
 
 template<>
