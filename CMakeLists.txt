@@ -674,6 +674,8 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/overloaded.hh
     include/seastar/fs/range.hh
     include/seastar/fs/unit_types.hh
+    src/fs/backend/bootstrapping.cc
+    src/fs/backend/bootstrapping.hh
     src/fs/backend/cluster_allocator.cc
     src/fs/backend/cluster_allocator.hh
     src/fs/backend/inode_info.hh

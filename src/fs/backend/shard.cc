@@ -19,13 +19,19 @@
  * Copyright (C) 2020 ScyllaDB
  */
 
+#include "fs/backend/bootstrapping.hh"
 #include "fs/backend/inode_info.hh"
 #include "fs/backend/metadata_log/entries.hh"
 #include "fs/backend/shard.hh"
 #include "fs/cluster_utils.hh"
 #include "fs/unix_metadata.hh"
+#include "seastar/core/thread.hh"
 
 namespace mle = seastar::fs::backend::metadata_log::entries;
+
+namespace {
+seastar::logger mlogger("fs_backend_shard");
+} // namespace
 
 namespace seastar::fs::backend {
 
@@ -47,9 +53,22 @@ shard::shard(block_device device, disk_offset_t cluster_size, disk_offset_t alig
 : shard(std::move(device), cluster_size, alignment,
         make_shared<metadata_log::to_disk_buffer>(), make_shared<Clock>()) {}
 
+future<> shard::bootstrap(inode_t root_dir, cluster_id_t first_metadata_cluster_id, cluster_range available_clusters,
+        fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id) {
+    return bootstrapping::bootstrap(*this, root_dir, first_metadata_cluster_id, available_clusters, fs_shards_pool_size,
+            fs_shard_id);
+}
+
 future<> shard::shutdown() {
-    return flush_log().then([this] {
-        return _device.close();
+    return async([this] {
+        // TODO: Wait for all active operations (reads, writes, etc.) and don't
+        //       allow for any new operations
+        try {
+            flush_log().get();
+        } catch (...) {
+            mlogger.warn("Error while flushing log during shutdown: {}", std::current_exception());
+        }
+        _device.close().get();
     });
 }
 

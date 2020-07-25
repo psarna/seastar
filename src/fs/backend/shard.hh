@@ -56,6 +56,8 @@ class shard {
     // TODO: for compaction: keep estimated metadata log size (that would take when written to disk) and
     //       the real size of metadata log taken on disk to allow for detecting when compaction
 
+    friend class bootstrapping;
+
 public:
     shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment,
             shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf, shared_ptr<Clock> clock);
@@ -65,6 +67,9 @@ public:
     shard(const shard&) = delete;
     shard& operator=(const shard&) = delete;
     shard(shard&&) = default;
+
+    future<> bootstrap(inode_t root_dir, cluster_id_t first_metadata_cluster_id, cluster_range available_clusters,
+            fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id);
 
     future<> shutdown();
 
