@@ -22,6 +22,7 @@
 #pragma once
 
 #include "fs/backend/cluster_allocator.hh"
+#include "fs/backend/cluster_writer.hh"
 #include "fs/backend/inode_info.hh"
 #include "fs/backend/metadata_log/to_disk_buffer.hh"
 #include "fs/clock.hh"
@@ -42,6 +43,8 @@ class shard {
 
     // Takes care of writing metadata log entries to current metadata log cluster on device
     shared_ptr<metadata_log::to_disk_buffer> _metadata_log_cbuf;
+    // Takes care of writing medium writes to current medium data log cluster on device
+    shared_ptr<cluster_writer> _medium_data_log_cw;
 
     cluster_allocator _cluster_allocator; // Manages free clusters
     shard_inode_allocator _inode_allocator; // Supplies new inode numbers
@@ -150,10 +153,11 @@ class shard {
     friend class create_file_operation;
     friend class link_file_operation;
     friend class unlink_or_remove_file_operation;
+    friend class write_operation;
 
 public:
     shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment,
-            shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf, shared_ptr<Clock> clock);
+            shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf, shared_ptr<cluster_writer> medium_data_log_cw, shared_ptr<Clock> clock);
 
     shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment);
 
@@ -171,8 +175,16 @@ private:
         return _inodes.count(inode) != 0;
     }
 
+    void write_update(inode_info::file& file, inode_data_vec new_data_vec);
+
+    // Deletes data vectors that are subset of @p data_range and cuts overlapping data vectors to make them not overlap
+    void cut_out_data_range(inode_info::file& file, file_range range);
+
     inode_info& memory_only_create_inode(inode_t inode, unix_metadata metadata);
     void memory_only_delete_inode(inode_t inode);
+    void memory_only_small_write(inode_t inode, disk_offset_t offset, temporary_buffer<uint8_t> data);
+    void memory_only_disk_write(inode_t inode, file_offset_t file_offset, disk_offset_t disk_offset, size_t write_len);
+    void memory_only_update_mtime(inode_t inode, decltype(unix_metadata::mtime_ns) mtime_ns);
     void memory_only_create_dentry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name);
     void memory_only_delete_dentry(inode_info::directory& dir, const std::string& entry_name);
 
@@ -317,6 +329,9 @@ public:
     future<inode_t> open_file(std::string path);
 
     future<> close_file(inode_t inode);
+
+    future<size_t> write(inode_t inode, file_offset_t pos, const void* buffer, size_t len,
+            const io_priority_class& pc = default_priority_class());
 
     // All disk-related errors will be exposed here
     future<> flush_log() {

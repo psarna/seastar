@@ -27,6 +27,7 @@
 #include "fs/backend/metadata_log/entries.hh"
 #include "fs/backend/shard.hh"
 #include "fs/backend/unlink_or_remove_file.hh"
+#include "fs/backend/write.hh"
 #include "fs/cluster_utils.hh"
 #include "fs/unix_metadata.hh"
 #include "seastar/core/thread.hh"
@@ -40,12 +41,13 @@ seastar::logger mlogger("fs_backend_shard");
 namespace seastar::fs::backend {
 
 shard::shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment,
-    shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf,
+    shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf, shared_ptr<cluster_writer> medium_data_log_cw,
     shared_ptr<Clock> clock)
 : _device(std::move(device))
 , _cluster_size(cluster_size)
 , _alignment(alignment)
 , _metadata_log_cbuf(std::move(metadata_log_cbuf))
+, _medium_data_log_cw(std::move(medium_data_log_cw))
 , _cluster_allocator({}, {})
 , _inode_allocator(1, 0)
 , _clock(std::move(clock)) {
@@ -55,7 +57,7 @@ shard::shard(block_device device, disk_offset_t cluster_size, disk_offset_t alig
 
 shard::shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment)
 : shard(std::move(device), cluster_size, alignment,
-        make_shared<metadata_log::to_disk_buffer>(), make_shared<Clock>()) {}
+        make_shared<metadata_log::to_disk_buffer>(), make_shared<cluster_writer>(), make_shared<Clock>()) {}
 
 future<> shard::bootstrap(inode_t root_dir, cluster_id_t first_metadata_cluster_id, cluster_range available_clusters,
         fs_shard_id_t fs_shards_pool_size, fs_shard_id_t fs_shard_id) {
@@ -73,6 +75,30 @@ future<> shard::shutdown() {
             mlogger.warn("Error while flushing log during shutdown: {}", std::current_exception());
         }
         _device.close().get();
+    });
+}
+
+void shard::write_update(inode_info::file& file, inode_data_vec new_data_vec) {
+    // TODO: for compaction: update used inode_data_vec
+    auto file_size = file.size();
+    if (file_size < new_data_vec.data_range.beg) {
+        file.data.emplace(file_size, inode_data_vec{
+            .data_range = {
+                .beg = file_size,
+                .end = new_data_vec.data_range.beg,
+            },
+            .data_location = inode_data_vec::hole_data{},
+        });
+    } else {
+        cut_out_data_range(file, new_data_vec.data_range);
+    }
+
+    file.data.emplace(new_data_vec.data_range.beg, std::move(new_data_vec));
+}
+
+void shard::cut_out_data_range(inode_info::file& file, file_range range) {
+    file.cut_out_data_range(range, [](inode_data_vec data_vec) {
+        (void)data_vec; // TODO: for compaction: update used inode_data_vec
     });
 }
 
@@ -109,6 +135,49 @@ void shard::memory_only_delete_inode(inode_t inode) {
     }, it->second.contents);
 
     _inodes.erase(it);
+}
+
+void shard::memory_only_small_write(inode_t inode, file_offset_t file_offset, temporary_buffer<uint8_t> data) {
+    inode_data_vec data_vec = {
+        .data_range = {
+            .beg = file_offset,
+            .end = file_offset + data.size(),
+        },
+        .data_location = inode_data_vec::in_mem_data{std::move(data)},
+    };
+
+    auto it = _inodes.find(inode);
+    assert(it != _inodes.end());
+    assert(it->second.is_file());
+    write_update(it->second.get_file(), std::move(data_vec));
+}
+
+void shard::memory_only_disk_write(inode_t inode, file_offset_t file_offset, disk_offset_t disk_offset,
+        size_t write_len) {
+    inode_data_vec data_vec = {
+        .data_range = {
+            .beg = file_offset,
+            .end = file_offset + write_len,
+        },
+        .data_location = inode_data_vec::on_disk_data{
+            .device_offset = disk_offset
+        },
+    };
+
+    auto it = _inodes.find(inode);
+    assert(it != _inodes.end());
+    assert(it->second.is_file());
+    write_update(it->second.get_file(), std::move(data_vec));
+}
+
+void shard::memory_only_update_mtime(inode_t inode, decltype(unix_metadata::mtime_ns) mtime_ns) {
+    auto it = _inodes.find(inode);
+    assert(it != _inodes.end());
+    it->second.metadata.mtime_ns = mtime_ns;
+    // ctime should be updated when contents is modified
+    if (it->second.metadata.ctime_ns < mtime_ns) {
+        it->second.metadata.ctime_ns = mtime_ns;
+    }
 }
 
 void shard::memory_only_create_dentry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name) {
@@ -376,6 +445,11 @@ future<> shard::close_file(inode_t inode) {
         }
         return now();
     });
+}
+
+future<size_t> shard::write(inode_t inode, file_offset_t pos, const void* buffer, size_t len,
+        const io_priority_class& pc) {
+    return write_operation::perform(*this, inode, pos, buffer, len, pc);
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,

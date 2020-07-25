@@ -155,6 +155,9 @@ bootstrapping::ca_init_res bootstrapping::initialize_shard_cluster_allocator() {
         return NOSPACE;
     }
 
+    _shard._medium_data_log_cw = _shard._medium_data_log_cw->virtual_constructor();
+    _shard._medium_data_log_cw->init(_shard._cluster_size, _shard._alignment,
+            cluster_id_to_offset(*cid_opt, _shard._cluster_size));
     return SUCCESS;
 }
 
@@ -333,22 +336,75 @@ future<> bootstrapping::bootstrap_entry<mle::delete_inode>(mle::delete_inode& en
 
 template<>
 future<> bootstrapping::bootstrap_entry<mle::small_write>(mle::small_write& entry) {
-    return make_exception_future(std::runtime_error("Not implemented"));
+    mlogger.debug("Entry: small write to {} at {} of size {}", entry.inode, entry.offset, entry.data.size());
+    if (!inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: inode does not exist");
+        return invalid_entry_exception();
+    }
+    if (!_shard._inodes[entry.inode].is_file()) {
+        mlogger.debug("^ Error: inode is not a regular file");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_small_write(entry.inode, entry.offset, std::move(entry.data));
+    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
+    return now();
 }
 
 template<>
 future<> bootstrapping::bootstrap_entry<mle::medium_write>(mle::medium_write& entry) {
-    return make_exception_future(std::runtime_error("Not implemented"));
+    mlogger.debug("Entry: medium write to {} at {}, placed on disk at [{}, {})", entry.inode, entry.offset, entry.drange.beg, entry.drange.end);
+    if (!inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: inode does not exist");
+        return invalid_entry_exception();
+    }
+    if (!_shard._inodes[entry.inode].is_file()) {
+        mlogger.debug("^ Error: inode is not a regular file");
+        return invalid_entry_exception();
+    }
+
+    cluster_id_t beg_cluster_id = offset_to_cluster_id(entry.drange.beg, _shard._cluster_size);
+    cluster_id_t end_cluster_id = offset_to_cluster_id(entry.drange.end, _shard._cluster_size);
+    if (entry.drange.beg >= entry.drange.end || beg_cluster_id != end_cluster_id) {
+        mlogger.debug("^ Error: disk offset range is invalid");
+        return invalid_entry_exception();
+    }
+    if (beg_cluster_id < _available_clusters.beg || _available_clusters.end <= beg_cluster_id) {
+        mlogger.debug("^ Error: cluster id is out of range");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_disk_write(entry.inode, entry.offset, entry.drange.beg, entry.drange.size());
+    _shard.memory_only_update_mtime(entry.inode, entry.time_ns);
+    return now();
 }
 
 template<>
 future<> bootstrapping::bootstrap_entry<mle::large_write_without_time>(mle::large_write_without_time& entry) {
-    return make_exception_future(std::runtime_error("Not implemented"));
+    mlogger.debug("Entry: large write to {} at {}, placed in cluster: {}", entry.inode, entry.offset, entry.data_cluster);
+    if (!inode_exists(entry.inode)) {
+        mlogger.debug("^ Error: inode does not exist");
+        return invalid_entry_exception();
+    }
+    if (!_shard._inodes[entry.inode].is_file()) {
+        mlogger.debug("^ Error: inode is not a regular file");
+        return invalid_entry_exception();
+    }
+    if (entry.data_cluster < _available_clusters.beg || _available_clusters.end <= entry.data_cluster) {
+        mlogger.debug("^ Error: cluster id is out of range");
+        return invalid_entry_exception();
+    }
+
+    _shard.memory_only_disk_write(entry.inode, entry.offset,
+            cluster_id_to_offset(entry.data_cluster, _shard._cluster_size), _shard._cluster_size);
+    return now();
 }
 
 template<>
 future<> bootstrapping::bootstrap_entry<mle::large_write>(mle::large_write& entry) {
-    return make_exception_future(std::runtime_error("Not implemented"));
+    return bootstrap_entry(entry.lwwt).then([this, entry] {
+        _shard.memory_only_update_mtime(entry.lwwt.inode, entry.time_ns);
+    });
 }
 
 template<>

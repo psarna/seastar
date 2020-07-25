@@ -678,6 +678,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/backend/bootstrapping.hh
     src/fs/backend/cluster_allocator.cc
     src/fs/backend/cluster_allocator.hh
+    src/fs/backend/cluster_writer.hh
     src/fs/backend/create_and_open_unlinked_file.hh
     src/fs/backend/create_file.hh
     src/fs/backend/inode_info.hh
@@ -688,6 +689,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/backend/shard.cc
     src/fs/backend/shard.hh
     src/fs/backend/unlink_or_remove_file.hh
+    src/fs/backend/write.hh
     src/fs/bootstrap_record.cc
     src/fs/bootstrap_record.hh
     src/fs/clock.hh
