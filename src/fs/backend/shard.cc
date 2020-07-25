@@ -25,6 +25,7 @@
 #include "fs/backend/inode_info.hh"
 #include "fs/backend/link_file.hh"
 #include "fs/backend/metadata_log/entries.hh"
+#include "fs/backend/read.hh"
 #include "fs/backend/shard.hh"
 #include "fs/backend/unlink_or_remove_file.hh"
 #include "fs/backend/write.hh"
@@ -445,6 +446,11 @@ future<> shard::close_file(inode_t inode) {
         }
         return now();
     });
+}
+
+future<size_t> shard::read(inode_t inode, file_offset_t pos, void* buffer, size_t len,
+        const io_priority_class& pc) {
+    return read_operation::perform(*this, inode, pos, buffer, len, pc);
 }
 
 future<size_t> shard::write(inode_t inode, file_offset_t pos, const void* buffer, size_t len,

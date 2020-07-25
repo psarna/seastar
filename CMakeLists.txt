@@ -686,6 +686,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/backend/metadata_log/entries.cc
     src/fs/backend/metadata_log/entries.hh
     src/fs/backend/metadata_log/to_disk_buffer.hh
+    src/fs/backend/read.hh
     src/fs/backend/shard.cc
     src/fs/backend/shard.hh
     src/fs/backend/unlink_or_remove_file.hh
@@ -695,6 +696,8 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/clock.hh
     src/fs/cluster_utils.hh
     src/fs/crc.hh
+    src/fs/device_reader.cc
+    src/fs/device_reader.hh
     src/fs/inode_utils.hh
     src/fs/path.hh
     src/fs/temporary_file.hh
