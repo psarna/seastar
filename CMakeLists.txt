@@ -701,6 +701,7 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/device_reader.cc
     src/fs/device_reader.hh
     src/fs/inode_utils.hh
+    src/fs/path.cc
     src/fs/path.hh
     src/fs/temporary_file.hh
     src/fs/to_disk_buffer.hh
