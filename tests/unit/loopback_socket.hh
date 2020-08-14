@@ -178,6 +178,13 @@ public:
     net::keepalive_params get_keepalive_parameters() const override {
         return net::tcp_keepalive_params {std::chrono::seconds(0), std::chrono::seconds(0), 0};
     }
+    void set_timestamping_parameters(net::timestamping_params&& params) override {
+        throw std::runtime_error("Timestamping is not yet implemented for loopback");
+    }
+    net::timestamping_params get_timestamping_parameters() const override {
+        //FIXME: implement
+        return net::timestamping_params();
+    }
 };
 
 class loopback_server_socket_impl : public net::server_socket_impl {

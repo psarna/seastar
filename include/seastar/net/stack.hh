@@ -44,6 +44,8 @@ public:
     virtual bool get_keepalive() const = 0;
     virtual void set_keepalive_parameters(const keepalive_params&) = 0;
     virtual keepalive_params get_keepalive_parameters() const = 0;
+    virtual void set_timestamping_parameters(timestamping_params&& params) = 0;
+    virtual timestamping_params get_timestamping_parameters() const = 0;
 };
 
 class socket_impl {

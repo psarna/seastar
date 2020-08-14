@@ -24,6 +24,7 @@
 #include <linux/if.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+#include <linux/net_tstamp.h>
 #include <net/route.h>
 
 #include <seastar/core/reactor.hh>
@@ -81,6 +82,8 @@ public:
     virtual bool get_keepalive(file_desc& _fd) const = 0;
     virtual void set_keepalive_parameters(file_desc& _fd, const keepalive_params& params) const = 0;
     virtual keepalive_params get_keepalive_parameters(file_desc& _fd) const = 0;
+    virtual void set_timestamping_parameters(file_desc& _fd, timestamping_params&& params) const = 0;
+    virtual timestamping_params get_timestamping_parameters(file_desc& _fd) const = 0;
 };
 
 thread_local posix_ap_server_socket_impl::sockets_map_t posix_ap_server_socket_impl::sockets{};
@@ -112,6 +115,41 @@ public:
             std::chrono::seconds(_fd.getsockopt<int>(IPPROTO_TCP, TCP_KEEPINTVL)),
             _fd.getsockopt<unsigned>(IPPROTO_TCP, TCP_KEEPCNT)
         };
+    }
+    virtual void set_timestamping_parameters(file_desc& _fd, timestamping_params&& params) const override {
+        validate(params);
+        _fd.setsockopt(SOL_SOCKET, SO_TIMESTAMP, int(params.system_timestamp));
+        _fd.setsockopt(SOL_SOCKET, SO_TIMESTAMPNS, int(params.system_timestamp_ns));
+        int val = 0;
+        val |= (params.nic_timestamp_request_tx_hardware ? SOF_TIMESTAMPING_TX_HARDWARE : 0);
+        val |= (params.nic_timestamp_request_tx_software ? SOF_TIMESTAMPING_TX_SOFTWARE : 0);
+        val |= (params.nic_timestamp_request_rx_hardware ? SOF_TIMESTAMPING_RX_HARDWARE : 0);
+        val |= (params.nic_timestamp_request_rx_software ? SOF_TIMESTAMPING_RX_SOFTWARE : 0);
+        val |= (params.nic_timestamp_report_software ? SOF_TIMESTAMPING_SOFTWARE : 0);
+        val |= (params.nic_timestamp_report_hardware ? SOF_TIMESTAMPING_RAW_HARDWARE : 0);
+        //TODO: there are more parameters eligible for SO_TIMESTAMPING.
+        // Details: https://www.kernel.org/doc/Documentation/networking/timestamping.txt
+        _fd.setsockopt(SOL_SOCKET, SO_TIMESTAMPING, reinterpret_cast<char*>(&val), sizeof(val));
+    }
+    virtual timestamping_params get_timestamping_parameters(file_desc& _fd) const override {
+        timestamping_params params;
+        params.system_timestamp = _fd.getsockopt<int>(SOL_SOCKET, SO_TIMESTAMP);
+        params.system_timestamp_ns = _fd.getsockopt<int>(SOL_SOCKET, SO_TIMESTAMPNS);
+        int so_timestamping = _fd.getsockopt<int>(SOL_SOCKET, SO_TIMESTAMPING);
+        params.nic_timestamp_request_tx_hardware = so_timestamping & SOF_TIMESTAMPING_TX_HARDWARE;
+        params.nic_timestamp_request_tx_software = so_timestamping & SOF_TIMESTAMPING_TX_SOFTWARE;
+        params.nic_timestamp_request_rx_hardware = so_timestamping & SOF_TIMESTAMPING_RX_HARDWARE;
+        params.nic_timestamp_request_rx_software = so_timestamping & SOF_TIMESTAMPING_RX_SOFTWARE;
+        params.nic_timestamp_report_software = so_timestamping & SOF_TIMESTAMPING_SOFTWARE;
+        params.nic_timestamp_report_hardware = so_timestamping & SOF_TIMESTAMPING_RAW_HARDWARE;
+        return params;
+    }
+
+    static void validate(const timestamping_params& params) {
+        if (params.system_timestamp && params.system_timestamp_ns) {
+            throw std::runtime_error("Timestamping error: "
+                    "system_timestamp and system_timestamp_ns options are mutually exclusive.");
+        }
     }
 };
 
@@ -149,6 +187,13 @@ public:
             params.spp_pathmaxrxt
         };
     }
+    virtual void set_timestamping_parameters(file_desc& _fd, timestamping_params&& params) const override {
+        throw std::runtime_error("Timestamping is not yet implemented for SCTP");
+    }
+    virtual timestamping_params get_timestamping_parameters(file_desc& _fd) const override {
+        //FIXME: implement
+        return timestamping_params();
+    }
 };
 
 class posix_unix_stream_connected_socket_operations : public posix_connected_socket_operations {
@@ -166,6 +211,13 @@ public:
     virtual void set_keepalive_parameters(file_desc& fd, const keepalive_params& p) const override {}
     virtual keepalive_params get_keepalive_parameters(file_desc& fd) const override {
         return keepalive_params{};
+    }
+    virtual void set_timestamping_parameters(file_desc& _fd, timestamping_params&& params) const override {
+        throw std::runtime_error("Timestamping is not yet implemented for UNIX domain sockets");
+    }
+    virtual timestamping_params get_timestamping_parameters(file_desc& _fd) const override {
+        //FIXME: implement
+        return timestamping_params();
     }
 };
 
@@ -233,6 +285,12 @@ public:
     }
     keepalive_params get_keepalive_parameters() const override {
         return _ops->get_keepalive_parameters(_fd.get_file_desc());
+    }
+    void set_timestamping_parameters(timestamping_params&& params) override {
+        return _ops->set_timestamping_parameters(_fd.get_file_desc(), std::move(params));
+    }
+    timestamping_params get_timestamping_parameters() const override {
+        return _ops->get_timestamping_parameters(_fd.get_file_desc());
     }
     friend class posix_server_socket_impl;
     friend class posix_ap_server_socket_impl;
