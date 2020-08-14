@@ -100,6 +100,8 @@ public:
     bool get_keepalive() const override;
     void set_keepalive_parameters(const keepalive_params&) override;
     keepalive_params get_keepalive_parameters() const override;
+    virtual void set_timestamping_parameters(timestamping_params&& params) override;
+    virtual timestamping_params get_timestamping_parameters() const override;
 };
 
 template <typename Protocol>
@@ -249,6 +251,19 @@ template <typename Protocol>
 keepalive_params native_connected_socket_impl<Protocol>::get_keepalive_parameters() const {
     // FIXME: implement
     return tcp_keepalive_params {std::chrono::seconds(0), std::chrono::seconds(0), 0};
+}
+
+template <typename Protocol>
+void
+native_connected_socket_impl<Protocol>::set_timestamping_parameters(timestamping_params&& params) {
+    throw std::runtime_error("Timestamping is not yet implemented for native sockets");
+}
+
+template <typename Protocol>
+timestamping_params
+native_connected_socket_impl<Protocol>::get_timestamping_parameters() const {
+    // FIXME: implement
+    return timestamping_params();
 }
 
 }

@@ -1395,6 +1395,12 @@ public:
     net::keepalive_params get_keepalive_parameters() const override {
         return _session->socket().get_keepalive_parameters();
     }
+    void set_timestamping_parameters(net::timestamping_params&& params) override {
+        _session->socket().set_timestamping_parameters(std::move(params));
+    }
+    net::timestamping_params get_timestamping_parameters() const override {
+        return _session->socket().get_timestamping_parameters();
+    }
 };
 
 

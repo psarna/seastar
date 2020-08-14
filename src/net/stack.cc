@@ -120,6 +120,12 @@ void connected_socket::set_keepalive_parameters(const net::keepalive_params& p) 
 net::keepalive_params connected_socket::get_keepalive_parameters() const {
     return _csi->get_keepalive_parameters();
 }
+net::timestamping_params connected_socket::get_timestamping_parameters() const {
+    return _csi->get_timestamping_parameters();
+}
+void connected_socket::set_timestamping_parameters(net::timestamping_params&& params) {
+    _csi->set_timestamping_parameters(std::move(params));
+}
 
 void connected_socket::shutdown_output() {
     _csi->shutdown_output();
