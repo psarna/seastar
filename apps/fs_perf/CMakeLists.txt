@@ -25,3 +25,9 @@ SOURCES
   fs_tester.cc
   results_printers.cc
   sfs_perf.cc)
+seastar_add_app (kernel_fs_perf
+SOURCES
+  fs_tester.cc
+  results_printers.cc
+  filesystem_mgmt.cc
+  kernel_fs_perf.cc)

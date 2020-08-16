@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include "filesystem_mgmt.hh"
+
 #include <algorithm>
 #include <boost/range/adaptors.hpp>
 #include <chrono>
@@ -43,6 +45,11 @@ struct sfs_config {
     size_t cluster_size;
     double compactness;
     size_t compaction_max_memory_size;
+};
+
+struct default_config {
+    filesystem_type fs_type;
+    std::string device_path;
 };
 
 namespace internal {
@@ -76,6 +83,42 @@ seastar::future<double> start_run(const sfs_config& fsconf, const RunConfig& rco
 
     seastar::sharded<RunTester> tester;
     tester.start(std::ref(fs), rconf).get();
+    auto stop_tester = seastar::defer([&tester] {
+        tester.stop().get();
+    });
+
+    std::cerr << "Starting initialization" << std::endl;
+    try {
+        tester.invoke_on_all([](RunTester& local_env) {
+            return local_env.init();
+        }).get();
+    } catch (...) {
+        std::cerr << "Exception occurred during run init: " << std::current_exception() << std::endl;
+        throw;
+    }
+
+    std::cerr << "Starting run" << std::endl;
+    return measure_run_time(tester, rconf);
+}
+
+template<typename RunTester, typename RunConfig>
+seastar::future<double> start_run(const default_config& fsconf, const RunConfig& rconf) {
+    mkfs(fsconf.device_path, fsconf.fs_type);
+
+    seastar::tmp_dir mount_point;
+    mount_point.create().get();
+    mount(fsconf.device_path, mount_point.get_path());
+    auto unmount_fs = seastar::defer([&] {
+        if (mount_point.has_path()) {
+            unmount(mount_point.get_path());
+            mount_point.remove().get();
+        }
+    });
+
+    size_t shard_space = filesystem_remaining_space(mount_point.get_path()) / seastar::smp::count;
+
+    seastar::sharded<RunTester> tester;
+    tester.start(mount_point.get_path(), rconf, shard_space).get();
     auto stop_tester = seastar::defer([&tester] {
         tester.stop().get();
     });

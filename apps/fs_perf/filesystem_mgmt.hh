@@ -21,28 +21,14 @@
 
 #pragma once
 
-#include "filesystem_mgmt.hh"
-
-#include <fmt/format.h>
-#include <seastar/util/conversions.hh>
-#include <stdexcept>
 #include <string>
-#include <utility>
 
-std::pair<size_t, size_t> parse_memory_range(std::string s) {
-    constexpr char delim = ',';
-    auto pos = s.find(delim);
-    if (pos == s.npos) {
-        throw std::runtime_error(fmt::format("Cannot parse memory range '{}'", s));
-    }
-    return { seastar::parse_memory_size(s.substr(0, pos)), seastar::parse_memory_size(s.substr(pos + 1, s.size())) };
-}
+enum class filesystem_type {
+    XFS,
+    EXT4
+};
 
-filesystem_type parse_fs_type(const std::string& fs) {
-    if (fs == "xfs" || fs == "XFS") {
-        return filesystem_type::XFS;
-    } else if (fs == "ext4" || fs == "EXT4") {
-        return filesystem_type::EXT4;
-    }
-    throw std::runtime_error(fmt::format("Unknown fs type '{}'", fs));
-}
+void mkfs(const std::string& device_path, filesystem_type fs_type);
+void mount(const std::string& device_path, const std::string& mount_point);
+void unmount(const std::string& mount_point);
+size_t filesystem_remaining_space(const std::string& path);
