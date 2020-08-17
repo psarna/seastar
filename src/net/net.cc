@@ -49,6 +49,23 @@ std::ostream& operator<<(std::ostream &os, ipv4_addr addr) {
     return os << ":" << addr.port;
 }
 
+namespace net {
+std::ostream& operator<<(std::ostream& os, const timestamping_params& params) {
+    return os << "timestamping{"
+            << "system:" << (params.system_timestamp ? "on;" : "off;")
+            << "system(ns):" << (params.system_timestamp_ns ? "on;" : "off;")
+            << "nic_request:"
+                    << (params.nic_timestamp_request_tx_hardware ? "tx_hardware," : "-,")
+                    << (params.nic_timestamp_request_tx_software ? "tx_software," : "-,")
+                    << (params.nic_timestamp_request_rx_hardware ? "rx_hardware," : "-,")
+                    << (params.nic_timestamp_request_rx_software ? "rx_software;" : "-;")
+            << "nic_report:"
+                    << (params.nic_timestamp_report_hardware ? "hardware," : "-,")
+                    << (params.nic_timestamp_report_software ? "software" : "-")
+            << "}";
+}
+}
+
 using std::move;
 
 ipv4_addr::ipv4_addr(const std::string &addr) {
