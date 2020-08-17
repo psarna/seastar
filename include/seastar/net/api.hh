@@ -120,6 +120,8 @@ struct timestamping_params {
 
 };
 
+std::ostream& operator<<(std::ostream& os, const net::timestamping_params& params);
+
 /// \cond internal
 class connected_socket_impl;
 class socket_impl;
