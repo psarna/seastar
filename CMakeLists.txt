@@ -671,8 +671,12 @@ if (Seastar_EXPERIMENTAL_FS)
     include/seastar/fs/bitwise.hh
     include/seastar/fs/block_device.hh
     include/seastar/fs/exceptions.hh
+    include/seastar/fs/file.hh
+    include/seastar/fs/file_handle.hh
+    include/seastar/fs/filesystem.hh
     include/seastar/fs/overloaded.hh
     include/seastar/fs/range.hh
+    include/seastar/fs/shared_root.hh
     include/seastar/fs/stat.hh
     include/seastar/fs/unit_types.hh
     src/fs/backend/bootstrapping.cc
@@ -700,8 +704,13 @@ if (Seastar_EXPERIMENTAL_FS)
     src/fs/crc.hh
     src/fs/device_reader.cc
     src/fs/device_reader.hh
+    src/fs/file.cc
+    src/fs/file_handle.cc
+    src/fs/filesystem.cc
     src/fs/inode_utils.hh
+    src/fs/path.cc
     src/fs/path.hh
+    src/fs/shared_root.cc
     src/fs/temporary_file.hh
     src/fs/to_disk_buffer.hh
     src/fs/unix_metadata.hh

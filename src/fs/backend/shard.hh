@@ -352,6 +352,11 @@ public:
     future<> flush_log() {
         return flush_curr_cluster();
     }
+
+    // Returns approximation of available space for storing data
+    size_t remaining_space() const noexcept {
+        return _cluster_allocator.remaining_clusters_number() * _cluster_size;
+    }
 };
 
 } // namespace seastar::fs::backend

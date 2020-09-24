@@ -22,6 +22,7 @@
 #pragma once
 
 #include <seastar/fs/block_device.hh>
+#include <seastar/fs/unit_types.hh>
 #include <string>
 
 namespace seastar::fs {
@@ -51,6 +52,15 @@ public:
 
     future<> flush() noexcept override {
         return make_ready_future<>();
+    }
+
+    future<> truncate(disk_offset_t length) noexcept {
+        buf.resize(length);
+        return make_ready_future<>();
+    }
+
+    future<disk_offset_t> size() noexcept override {
+        return make_ready_future<disk_offset_t>(buf.size());
     }
 
     future<> close() noexcept override {
