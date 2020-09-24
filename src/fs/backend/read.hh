@@ -23,6 +23,7 @@
 
 #include "fs/backend/inode_info.hh"
 #include "fs/backend/shard.hh"
+#include "fs/cluster_utils.hh"
 #include "fs/device_reader.hh"
 #include "seastar/core/do_with.hh"
 #include "seastar/core/file.hh"
@@ -71,16 +72,26 @@ class read_operation {
 
             // TODO: we can change it to deque to pop from data_vecs instead of iterating
             std::vector<inode_data_vec> data_vecs;
+            std::vector<cluster_id_t> cluster_ids;
             // Extract data vectors from file_info
             file_info->execute_on_data_range({
                 .beg = file_offset,
                 .end = file_offset + read_len,
-            }, [&data_vecs](inode_data_vec data_vec) {
-                // TODO: for compaction: mark that clusters shouldn't be moved to _cluster_allocator before that read ends
+            }, [&](inode_data_vec data_vec) {
+                if (std::holds_alternative<inode_data_vec::on_disk_data>(data_vec.data_location)) {
+                    cluster_ids.emplace_back(offset_to_cluster_id(
+                        std::get<inode_data_vec::on_disk_data>(data_vec.data_location).device_offset,
+                        _shard._cluster_size)
+                    );
+                }
                 data_vecs.emplace_back(std::move(data_vec));
             });
 
-            return iterate_reads(buffer, file_offset, std::move(data_vecs));
+            // TODO: We can release locks gradually instead of all at once.
+            return _shard.with_data_cluster_read_locks_nowait(std::move(cluster_ids),
+                    [this, buffer, file_offset, data_vecs = std::move(data_vecs)]() mutable {
+                return iterate_reads(buffer, file_offset, std::move(data_vecs));
+            });
         });
     }
 

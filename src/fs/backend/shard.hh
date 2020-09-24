@@ -23,6 +23,7 @@
 
 #include "fs/backend/cluster_allocator.hh"
 #include "fs/backend/cluster_writer.hh"
+#include "fs/backend/data_cluster_contents_info.hh"
 #include "fs/backend/inode_info.hh"
 #include "fs/backend/metadata_log/to_disk_buffer.hh"
 #include "fs/clock.hh"
@@ -41,6 +42,7 @@ class shard {
     const disk_offset_t _alignment;
 
     shared_future<> _background_futures = now(); // Background tasks
+    shared_future<> _background_compactions = now();
 
     // Takes care of writing metadata log entries to current metadata log cluster on device
     shared_ptr<metadata_log::to_disk_buffer> _metadata_log_cbuf;
@@ -56,6 +58,27 @@ class shard {
 
     shared_ptr<Clock> _clock;
 
+    struct read_only_fs_tag { };
+    using read_only_fs = bool_class<read_only_fs_tag>;
+
+    read_only_fs _read_only_fs = read_only_fs::no;
+
+    void throw_if_read_only_fs();
+
+    void set_fs_read_only_mode(read_only_fs val) noexcept;
+
+    // Estimations of metadata log size used in compaction
+    cluster_id_t _log_cluster_count = 0;
+    size_t _compacted_log_size = 0;
+    std::unordered_map<cluster_id_t, data_cluster_contents_info*> _data_cluster_contents_info_map;
+    // TODO: maybe rename those to something more meaningful for compaction? like _enabled_for_compaction_data_clusters
+    //       and _disabled_from_compaction_data_clusters?
+    std::unordered_map<cluster_id_t, data_cluster_contents_info> _writable_data_clusters;
+    std::unordered_map<cluster_id_t, data_cluster_contents_info> _read_only_data_clusters;
+
+    double _compactness;
+    size_t _max_data_compaction_memory;
+    std::vector<cluster_id_t> _compaction_ready_data_clusters;
     // Locks are used to ensure metadata consistency while allowing concurrent usage.
     //
     // Whenever one wants to create or delete inode or directory entry, one has to acquire appropriate unique lock for
@@ -143,12 +166,30 @@ class shard {
         }
     } _locks;
 
-    // TODO: for compaction: keep some set(?) of inode_data_vec, so that we can keep track of clusters that have lowest
-    //       utilization (up-to-date data)
-    // TODO: for compaction: keep estimated metadata log size (that would take when written to disk) and
-    //       the real size of metadata log taken on disk to allow for detecting when compaction
+    template<class Func> // TODO: use noncopyable_function
+    futurize_t<std::result_of_t<Func ()>>
+    with_data_cluster_read_locks_nowait(std::vector<cluster_id_t> cluster_ids, Func&& func) {
+        std::vector<data_cluster_contents_info*> data_clusters_info;
+        data_clusters_info.reserve(cluster_ids.size());
+        for (auto& cluster_id : cluster_ids) {
+            auto it = _data_cluster_contents_info_map.find(cluster_id);
+            assert(it != _data_cluster_contents_info_map.end());
+            it->second->read_lock_nowait();
+            data_clusters_info.emplace_back(it->second);
+        }
+        return now().then([func = std::forward<Func>(func)]() mutable {
+            return func();
+        }).finally([this, data_clusters_info = std::move(data_clusters_info)] {
+            // TODO: we could just use find again to omit allocating memory for data_clusters_info
+            for (auto& data_cluster_info : data_clusters_info) {
+                data_cluster_info->read_unlock();
+            }
+        });
+    }
 
     friend class bootstrapping;
+
+    friend class data_compaction;
 
     friend class create_and_open_unlinked_file_operation;
     friend class create_file_operation;
@@ -159,10 +200,12 @@ class shard {
     friend class write_operation;
 
 public:
-    shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment,
-            shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf, shared_ptr<cluster_writer> medium_data_log_cw, shared_ptr<Clock> clock);
+    shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment, double compactness,
+        size_t max_data_compaction_memory, shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf,
+        shared_ptr<cluster_writer> medium_data_log_cw, shared_ptr<Clock> clock);
 
-    shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment);
+    shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment, double compactness,
+        size_t max_data_compaction_memory);
 
     shard(const shard&) = delete;
     shard& operator=(const shard&) = delete;
@@ -192,12 +235,22 @@ private:
     void memory_only_create_dentry(inode_info::directory& dir, inode_t entry_inode, std::string entry_name);
     void memory_only_delete_dentry(inode_info::directory& dir, const std::string& entry_name);
 
+    void finish_writing_data_cluster(cluster_id_t cluster_id);
+    void make_data_cluster_writable(cluster_id_t cluster_id);
+    void free_writable_data_cluster(cluster_id_t cluster_id) noexcept;
+    void add_cluster_to_compact(cluster_id_t cluster_id, size_t size);
+
     template<class Func> // TODO: use noncopyable_function
     void schedule_background_task(Func&& task) {
         // FIXME: bound concurrency, but be careful in the caller of this function, as now following assumption is taken
         //        in the caller: scheduling background task is atomic and not asynchronous, thus no locking is required
         //        on resources because no other continuation will be scheduled
         _background_futures = when_all_succeed(_background_futures.get_future(), std::forward<Func>(task));
+    }
+
+    template<class Func>
+    void schedule_background_compaction(Func&& task) {
+        _background_compactions = _background_compactions.get_future().then([task = std::move(task)](){return task();});
     }
 
     void schedule_flush_of_curr_cluster();
@@ -219,6 +272,8 @@ private:
 
     template<class Entry>
     [[nodiscard]] append_result append_metadata_log(const Entry& entry) {
+        throw_if_read_only_fs();
+
         using AR = append_result;
         // TODO: maybe check for errors on _background_futures to expose previous errors?
         switch (_metadata_log_cbuf->append(entry)) {
@@ -257,6 +312,8 @@ private:
 
     // It is safe for @p path to be a temporary (there is no need to worry about its lifetime)
     future<inode_t> path_lookup(const std::string& path) const;
+
+    future<> compact_data_clusters(std::vector<cluster_id_t> cluster_ids);
 
 public:
     template<class Func> // TODO: noncopyable_function
@@ -350,7 +407,9 @@ public:
 
     // All disk-related errors will be exposed here
     future<> flush_log() {
-        return flush_curr_cluster();
+        return _background_compactions.get_future().then([this] {
+            return flush_curr_cluster();
+        });
     }
 
     // Returns approximation of available space for storing data

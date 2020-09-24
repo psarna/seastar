@@ -25,6 +25,7 @@
 #include "fs/backend/shard.hh"
 #include "fs/cluster_utils.hh"
 #include "fs/unix_metadata.hh"
+#include "seastar/core/circular_buffer.hh"
 #include "seastar/fs/overloaded.hh"
 #include "seastar/util/defer.hh"
 #include "seastar/util/log.hh"
@@ -73,6 +74,7 @@ future<> bootstrapping::bootstrap(cluster_id_t first_metadata_cluster_id, fs_sha
         fs_shard_id_t fs_shard_id) {
     _next_cluster = first_metadata_cluster_id;
     mlogger.debug(">>>>  Started bootstrapping  <<<<");
+    // TODO: disable all compaction during bootstrapping -- it cannot happen now because we just replay the metadata log
     return do_until([this] { return !_next_cluster; }, [this] {
         _curr_cluster.id = *_next_cluster;
         _next_cluster = std::nullopt;
@@ -139,7 +141,7 @@ bootstrapping::ca_init_res bootstrapping::initialize_shard_cluster_allocator() {
 
     // TODO: maybe check that writes do not overlap with other (still valid) writes on disk and do not use metadata_log clusters
 
-    std::deque<cluster_id_t> free_clusters;
+    circular_buffer<cluster_id_t> free_clusters;
     for (auto cid : boost::irange(_available_clusters.beg, _available_clusters.end)) {
         if (taken_clusters.find(cid) == taken_clusters.end()) {
             free_clusters.emplace_back(cid);
@@ -147,7 +149,7 @@ bootstrapping::ca_init_res bootstrapping::initialize_shard_cluster_allocator() {
     }
 
     mlogger.debug("free clusters: {}", free_clusters.size());
-    _shard._cluster_allocator = cluster_allocator(std::move(taken_clusters), std::move(free_clusters));
+    _shard._cluster_allocator.reset(std::move(taken_clusters), std::move(free_clusters));
 
     auto cid_opt = _shard._cluster_allocator.alloc();
     if (!cid_opt) {

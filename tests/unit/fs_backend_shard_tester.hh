@@ -44,6 +44,8 @@ public:
     struct options {
         disk_offset_t cluster_size = 1 * MB;
         disk_offset_t alignment = 256;
+        double compactness = -1; // not testing compaction
+        size_t max_data_compaction_memory = cluster_size;
         cluster_id_t first_metadata_cluster_id = 1;
         cluster_range available_clusters = {
             .beg = 1,

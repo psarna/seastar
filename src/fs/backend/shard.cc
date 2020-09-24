@@ -22,6 +22,8 @@
 #include "fs/backend/bootstrapping.hh"
 #include "fs/backend/create_and_open_unlinked_file.hh"
 #include "fs/backend/create_file.hh"
+#include "fs/backend/data_cluster_contents_info.hh"
+#include "fs/backend/data_compaction.hh"
 #include "fs/backend/inode_info.hh"
 #include "fs/backend/link_file.hh"
 #include "fs/backend/metadata_log/entries.hh"
@@ -43,23 +45,26 @@ seastar::logger mlogger("fs_backend_shard");
 
 namespace seastar::fs::backend {
 
-shard::shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment,
-    shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf, shared_ptr<cluster_writer> medium_data_log_cw,
-    shared_ptr<Clock> clock)
+shard::shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment, double compactness,
+    size_t max_data_compaction_memory, shared_ptr<metadata_log::to_disk_buffer> metadata_log_cbuf,
+    shared_ptr<cluster_writer> medium_data_log_cw, shared_ptr<Clock> clock)
 : _device(std::move(device))
 , _cluster_size(cluster_size)
 , _alignment(alignment)
 , _metadata_log_cbuf(std::move(metadata_log_cbuf))
 , _medium_data_log_cw(std::move(medium_data_log_cw))
-, _cluster_allocator({}, {})
 , _inode_allocator(1, 0)
-, _clock(std::move(clock)) {
+, _clock(std::move(clock))
+, _compactness(compactness)
+, _max_data_compaction_memory(max_data_compaction_memory) {
     assert(is_power_of_2(alignment));
     assert(cluster_size > 0 && cluster_size % alignment == 0);
+    assert(compactness * cluster_size <= max_data_compaction_memory);
 }
 
-shard::shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment)
-: shard(std::move(device), cluster_size, alignment,
+shard::shard(block_device device, disk_offset_t cluster_size, disk_offset_t alignment, double compactness,
+    size_t max_data_compaction_memory)
+: shard(std::move(device), cluster_size, alignment, compactness, max_data_compaction_memory,
         make_shared<metadata_log::to_disk_buffer>(), make_shared<cluster_writer>(), make_shared<Clock>()) {}
 
 future<> shard::bootstrap(inode_t root_dir, cluster_id_t first_metadata_cluster_id, cluster_range available_clusters,
@@ -72,17 +77,29 @@ future<> shard::shutdown() {
     return async([this] {
         // TODO: Wait for all active operations (reads, writes, etc.) and don't
         //       allow for any new operations
+        _compactness = -1; // Turn off compactions
         try {
             flush_log().get();
         } catch (...) {
             mlogger.warn("Error while flushing log during shutdown: {}", std::current_exception());
+            // FIXME: some compactions may still appear after flush_log().
         }
         _device.close().get();
     });
 }
 
+void shard::throw_if_read_only_fs() {
+    if (__builtin_expect(_read_only_fs == read_only_fs::yes, false)) {
+        throw read_only_filesystem_exception();
+    }
+}
+
+void shard::set_fs_read_only_mode(read_only_fs val) noexcept {
+    mlogger.warn("Turned {} read-only mode.", val == read_only_fs::yes ? "on" : "off");
+    _read_only_fs = val;
+}
+
 void shard::write_update(inode_info::file& file, inode_data_vec new_data_vec) {
-    // TODO: for compaction: update used inode_data_vec
     auto file_size = file.size();
     if (file_size < new_data_vec.data_range.beg) {
         file.data.emplace(file_size, inode_data_vec{
@@ -95,18 +112,74 @@ void shard::write_update(inode_info::file& file, inode_data_vec new_data_vec) {
     } else {
         cut_out_data_range(file, new_data_vec.data_range);
     }
-
     file.data.emplace(new_data_vec.data_range.beg, std::move(new_data_vec));
 }
 
 void shard::cut_out_data_range(inode_info::file& file, file_range range) {
-    file.cut_out_data_range(range, [](inode_data_vec data_vec) {
-        (void)data_vec; // TODO: for compaction: update used inode_data_vec
+    file.cut_out_data_range(range, [&](const inode_data_vec& former, const inode_data_vec& left_remains, const inode_data_vec& right_remains) {
+        // Remove former before adding remains
+        std::visit(overloaded {
+            [&](const inode_data_vec::in_mem_data&) {
+                _compacted_log_size -= mle::ondisk_size<mle::small_write>(former.data_range.size());
+            },
+            [&](const inode_data_vec::on_disk_data& disk_data) {
+                // TODO: Differentiate between large write and large write without mtime
+                _compacted_log_size -= (former.data_range.size() == _cluster_size ?
+                    mle::ondisk_size<mle::large_write>() :
+                    mle::ondisk_size<mle::medium_write>());
+                cluster_id_t clst_id = offset_to_cluster_id(disk_data.device_offset, _cluster_size);
+                auto it = _data_cluster_contents_info_map.find(clst_id);
+                assert(it != _data_cluster_contents_info_map.end());
+                size_t pre_cut_cluster_data_size = it->second->get_up_to_date_data_size();
+                it->second->cut_data(disk_data.device_offset, former.data_range, left_remains.data_range, right_remains.data_range);
+                size_t post_cut_cluster_data_size = it->second->get_up_to_date_data_size();
+                if (pre_cut_cluster_data_size > _compactness * _cluster_size && post_cut_cluster_data_size <=
+                        _compactness * _cluster_size && _read_only_data_clusters.count(it->first) == 1) {
+                    add_cluster_to_compact(it->first, post_cut_cluster_data_size);
+                }
+            },
+            [&](const inode_data_vec::hole_data&) {
+            },
+        }, former.data_location);
+
+        auto visit_remains = [&](const inode_data_vec& data_vec) {
+            if (data_vec.data_range.is_empty()) {
+                return;
+            }
+            std::visit(overloaded {
+                [&](const inode_data_vec::in_mem_data&) {
+                    _compacted_log_size += mle::ondisk_size<mle::small_write>(data_vec.data_range.size());
+                },
+                [&](const inode_data_vec::on_disk_data& disk_data) {
+                    // Remaining data is smaller than original so it is not a large write anymore
+                    assert(data_vec.data_range.size() < _cluster_size);
+                    _compacted_log_size += mle::ondisk_size<mle::medium_write>();
+                },
+                [&](const inode_data_vec::hole_data&) {
+                },
+            }, data_vec.data_location);
+        };
+        visit_remains(left_remains);
+        visit_remains(right_remains);
+
+        // TODO: empty clusters compaction: we could check here if updated cluster has no up-to-date data and is
+        //       read-only. If so we could schedule compaction of that cluster in order to immediately move it to
+        //       _cluster_allocator.
     });
 }
 
 inode_info& shard::memory_only_create_inode(inode_t inode, unix_metadata metadata) {
     assert(_inodes.count(inode) == 0);
+    _compacted_log_size += mle::ondisk_size<mle::create_inode>();
+    switch (metadata.ftype) {
+    case file_type::DIRECTORY:
+        break;
+    case file_type::REGULAR_FILE:
+        // During rewrite we'll start with truncating the file to its final size to remember trailing holes
+        _compacted_log_size += mle::ondisk_size<mle::truncate>();
+        break;
+    }
+
     return _inodes.emplace(inode, inode_info{
         .opened_files_count = 0,
         .links_count = 0,
@@ -132,12 +205,17 @@ void shard::memory_only_delete_inode(inode_t inode) {
         [](const inode_info::directory& dir) {
             assert(dir.entries.empty());
         },
-        [](const inode_info::file&) {
-            // TODO: for compaction: update used inode_data_vec
+        [&](inode_info::file& file) {
+            cut_out_data_range(file, {
+                .beg = 0,
+                .end = std::numeric_limits<decltype(file_range::end)>::max()
+            });
+            _compacted_log_size -= mle::ondisk_size<mle::truncate>(); // See memory_only_create_inode() for why it is here
         }
     }, it->second.contents);
 
     _inodes.erase(it);
+    _compacted_log_size -= mle::ondisk_size<mle::create_inode>();
 }
 
 void shard::memory_only_small_write(inode_t inode, file_offset_t file_offset, temporary_buffer<uint8_t> data) {
@@ -148,15 +226,16 @@ void shard::memory_only_small_write(inode_t inode, file_offset_t file_offset, te
         },
         .data_location = inode_data_vec::in_mem_data{std::move(data)},
     };
-
     auto it = _inodes.find(inode);
     assert(it != _inodes.end());
     assert(it->second.is_file());
     write_update(it->second.get_file(), std::move(data_vec));
+    _compacted_log_size += mle::ondisk_size<mle::small_write>(data.size());
 }
 
 void shard::memory_only_disk_write(inode_t inode, file_offset_t file_offset, disk_offset_t disk_offset,
         size_t write_len) {
+    assert(write_len <= _cluster_size);
     inode_data_vec data_vec = {
         .data_range = {
             .beg = file_offset,
@@ -166,11 +245,23 @@ void shard::memory_only_disk_write(inode_t inode, file_offset_t file_offset, dis
             .device_offset = disk_offset
         },
     };
-
     auto it = _inodes.find(inode);
     assert(it != _inodes.end());
     assert(it->second.is_file());
     write_update(it->second.get_file(), std::move(data_vec));
+    _compacted_log_size += (write_len == _cluster_size ?
+        mle::ondisk_size<mle::large_write>() :
+        mle::ondisk_size<mle::medium_write>());
+    cluster_id_t cluster_id = offset_to_cluster_id(disk_offset, _cluster_size);
+    assert(_read_only_data_clusters.find(cluster_id) == _read_only_data_clusters.end());
+    auto [cc_info_it, created] = _writable_data_clusters.try_emplace(cluster_id);
+    auto& cc_info = cc_info_it->second;
+    cc_info.add_data(disk_offset, inode, {file_offset, file_offset + write_len});
+    if (created) {
+        mlogger.debug("adding cluster to writable: {}", cluster_id);
+        auto [_, inserted] = _data_cluster_contents_info_map.try_emplace(cluster_id, &cc_info);
+        assert(inserted);
+    }
 }
 
 void shard::memory_only_update_mtime(inode_t inode, decltype(unix_metadata::mtime_ns) mtime_ns) {
@@ -199,7 +290,6 @@ void shard::memory_only_truncate(inode_t inode, file_offset_t size) {
             .data_location = inode_data_vec::hole_data{},
         });
     } else {
-        // TODO: for compaction: update used inode_data_vec
         cut_out_data_range(file, {
             size,
             std::numeric_limits<decltype(file_range::end)>::max()
@@ -216,6 +306,15 @@ void shard::memory_only_create_dentry(inode_info::directory& dir, inode_t entry_
     bool inserted = dir.entries.emplace(std::move(entry_name), entry_inode).second;
     assert(inserted);
     ++it->second.links_count;
+
+    if (it->second.links_count == 1) {
+        // We know that we'll write mle::create_inode_as_dentry (instead of mle::create_inode and ondisk_add_dir_entry)
+        // in rewrite log because the entry is linked for the first time
+        _compacted_log_size += mle::ondisk_size<mle::create_inode_as_dentry>(entry_name.size()) -
+            mle::ondisk_size<mle::create_inode>();
+    } else {
+        _compacted_log_size += mle::ondisk_size<mle::create_dentry>(entry_name.size());
+    }
 }
 
 void shard::memory_only_delete_dentry(inode_info::directory& dir, const std::string& entry_name) {
@@ -228,35 +327,100 @@ void shard::memory_only_delete_dentry(inode_info::directory& dir, const std::str
 
     --entry_it->second.links_count;
     dir.entries.erase(it);
+
+    if (__builtin_expect(entry_it->second.links_count == 0, false)) {
+        // We were going to write mle::create_inode_as_dentry in rewrite log but we can't anymore
+        _compacted_log_size -= mle::ondisk_size<mle::create_inode_as_dentry>(entry_name.size()) -
+            mle::ondisk_size<mle::create_inode>();
+    } else {
+        _compacted_log_size -= mle::ondisk_size<mle::create_dentry>(entry_name.size());
+    }
+}
+
+void shard::finish_writing_data_cluster(cluster_id_t cluster_id) {
+    mlogger.debug("moving cluster to read only: {}", cluster_id);
+    auto nh = _writable_data_clusters.extract(cluster_id);
+    assert(!nh.empty());
+    auto insert_res = _read_only_data_clusters.insert(std::move(nh));
+    assert(insert_res.inserted);
+    size_t up_to_date_size = insert_res.position->second.get_up_to_date_data_size();
+    if (up_to_date_size <= _compactness * _cluster_size) {
+        add_cluster_to_compact(cluster_id, up_to_date_size);
+    }
+}
+
+void shard::make_data_cluster_writable(cluster_id_t cluster_id) {
+    mlogger.debug("moving cluster to writable: {}", cluster_id);
+    auto nh = _read_only_data_clusters.extract(cluster_id);
+    assert(!nh.empty());
+    auto insert_res = _writable_data_clusters.insert(std::move(nh));
+    assert(insert_res.inserted);
+}
+
+void shard::free_writable_data_cluster(cluster_id_t cluster_id) noexcept {
+    mlogger.debug("freeing cluster from writable: {}", cluster_id);
+    auto num = _data_cluster_contents_info_map.erase(cluster_id);
+    assert(num == 1);
+    num = _writable_data_clusters.erase(cluster_id);
+    assert(num == 1);
+    _cluster_allocator.free(cluster_id);
+}
+
+void shard::add_cluster_to_compact(cluster_id_t cluster_id, size_t size) {
+    // To add any cluster to compact only once, we add it the first time it becomes suitable - either
+    // when it's read-only and enough data becomes out-of-date or when it's already containing little data and it becomes read-only
+    if (size == 0) {
+        schedule_background_task([this, cluster_id] {return compact_data_clusters(std::vector<cluster_id_t>{cluster_id});});
+    } else {
+        mlogger.debug("Adding data cluster {} to compaction", cluster_id);
+        if ((_compaction_ready_data_clusters.size() + 1) * _compactness * _cluster_size > _max_data_compaction_memory) {
+            mlogger.debug("Running compaction on clusters {}", _compaction_ready_data_clusters);
+            std::vector<cluster_id_t> move_vec = {};
+            _compaction_ready_data_clusters.swap(move_vec);
+            schedule_background_compaction([this, move_vec = std::move(move_vec)] {return compact_data_clusters(std::move(move_vec));});
+        }
+        _compaction_ready_data_clusters.push_back(cluster_id);
+    }
 }
 
 void shard::schedule_flush_of_curr_cluster() {
+    throw_if_read_only_fs();
     // Make writes concurrent (TODO: maybe serialized within *one* cluster would be faster?)
-    schedule_background_task(do_with(_metadata_log_cbuf, &_device, [](auto& crr_clstr_bf, auto& device) {
-        return crr_clstr_bf->flush_to_disk(*device);
+    schedule_background_task(do_with(_metadata_log_cbuf, &_device, [this](auto& crr_clstr_bf, auto& device) {
+        throw_if_read_only_fs();
+        return crr_clstr_bf->flush_to_disk(*device).handle_exception([this](std::exception_ptr ptr) {
+            set_fs_read_only_mode(read_only_fs::yes);
+            return make_exception_future(std::move(ptr));
+        });
     }));
 }
 
 future<> shard::flush_curr_cluster() {
-    if (_metadata_log_cbuf->bytes_left_after_flush_if_done_now() == 0) {
-        switch (schedule_flush_of_curr_cluster_and_change_it_to_new_one()) {
-        case flush_result::NO_SPACE:
-            return make_exception_future(no_more_space_exception());
-        case flush_result::DONE:
-            break;
+    try {
+        if (_metadata_log_cbuf->bytes_left_after_flush_if_done_now() == 0) {
+            switch (schedule_flush_of_curr_cluster_and_change_it_to_new_one()) {
+            case flush_result::NO_SPACE:
+                return make_exception_future(no_more_space_exception());
+            case flush_result::DONE:
+                break;
+            }
+        } else {
+            schedule_flush_of_curr_cluster();
         }
-    } else {
-        schedule_flush_of_curr_cluster();
+    } catch(...) {
+        return seastar::make_exception_future(std::current_exception());
     }
 
     return _background_futures.get_future();
 }
 
 shard::flush_result shard::schedule_flush_of_curr_cluster_and_change_it_to_new_one() {
+    throw_if_read_only_fs();
+
     auto next_cluster = _cluster_allocator.alloc();
     if (!next_cluster) {
         // Here shard dies, we cannot even flush current cluster because from there we won't be able to recover
-        // TODO: ^ add protection from it and take it into account during compaction
+        // TODO: ^ add protection from it
         return flush_result::NO_SPACE;
     }
 
@@ -264,6 +428,7 @@ shard::flush_result shard::schedule_flush_of_curr_cluster_and_change_it_to_new_o
         .cluster_id = *next_cluster
     });
     assert(append_res == metadata_log::to_disk_buffer::APPENDED);
+    ++_log_cluster_count;
     schedule_flush_of_curr_cluster();
 
     // Make next cluster the current cluster to allow writing next metadata entries before flushing finishes
@@ -274,6 +439,7 @@ shard::flush_result shard::schedule_flush_of_curr_cluster_and_change_it_to_new_o
 }
 
 void shard::schedule_attempt_to_delete_inode(inode_t inode) {
+    throw_if_read_only_fs();
     return schedule_background_task([this, inode] {
         auto it = _inodes.find(inode);
         if (it == _inodes.end() || it->second.is_linked() || it->second.is_open()) {
@@ -526,6 +692,10 @@ future<size_t> shard::write(inode_t inode, file_offset_t pos, const void* buffer
 
 future<> shard::truncate(inode_t inode, file_offset_t size) {
     return truncate_operation::perform(*this, inode, size);
+}
+
+future<> shard::compact_data_clusters(std::vector<cluster_id_t> cluster_ids) {
+    return data_compaction::perform(*this, std::move(cluster_ids));
 }
 
 // TODO: think about how to make filesystem recoverable from ENOSPACE situation: flush() (or something else) throws ENOSPACE,

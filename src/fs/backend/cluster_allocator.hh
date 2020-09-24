@@ -16,32 +16,59 @@
  * under the License.
  */
 /*
- * Copyright (C) 2019 ScyllaDB
+ * Copyright (C) 2020 ScyllaDB
  */
 
 #pragma once
 
+#include "seastar/core/circular_buffer.hh"
+#include "seastar/core/future.hh"
+#include "seastar/core/semaphore.hh"
 #include "seastar/fs/unit_types.hh"
 
-#include <deque>
+#include <cstdint>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace seastar::fs::backend {
 
 class cluster_allocator {
     // TODO: maybe optimize it using bitset?
-    std::unordered_set<cluster_id_t> _allocated_clusters;
-    std::deque<cluster_id_t> _free_clusters;
+    std::unordered_map<cluster_id_t, bool> _allocated_clusters;
+    circular_buffer<cluster_id_t> _free_clusters;
+    semaphore _cluster_sem;
+
+    cluster_id_t do_alloc() noexcept;
+    void do_free(cluster_id_t cluster_id) noexcept;
 
 public:
-    explicit cluster_allocator(std::unordered_set<cluster_id_t> allocated_clusters, std::deque<cluster_id_t> free_clusters);
+    cluster_allocator();
+    cluster_allocator(std::unordered_set<cluster_id_t> allocated_clusters, circular_buffer<cluster_id_t> free_clusters);
 
-    // Tries to allocate a cluster
-    std::optional<cluster_id_t> alloc();
+    cluster_allocator(const cluster_allocator&) = delete;
+    cluster_allocator& operator=(const cluster_allocator&) = delete;
+    cluster_allocator(cluster_allocator&&) = default;
+    cluster_allocator& operator=(cluster_allocator&&) = delete;
 
-    // @p cluster_id has to be allocated using alloc()
-    void free(cluster_id_t cluster_id);
+    // Changes cluster_allocator's set of free and allocated clusters. Assumes that there are no allocated clusters
+    // and nobody uses the cluster_allocator (e.g. waiting to alloc() a cluster).
+    // Strong exception guarantee is provided.
+    void reset(std::unordered_set<cluster_id_t> allocated_clusters, circular_buffer<cluster_id_t> free_clusters);
+
+    // Tries to allocate a cluster.
+    std::optional<cluster_id_t> alloc() noexcept;
+
+    // Waits until @p count free clusters are available and allocates them.
+    // Strong exception guarantee is provided.
+    future<std::vector<cluster_id_t>> alloc_wait(semaphore::duration duration, size_t count = 1);
+
+    // @p cluster_id has to be allocated using alloc() or alloc_wait()
+    void free(cluster_id_t cluster_id) noexcept;
+
+    // @p cluster_ids have to be allocated using alloc() or alloc_wait()
+    void free(const std::vector<cluster_id_t>& cluster_ids) noexcept;
 
     size_t remaining_clusters_number() const noexcept {
         return _free_clusters.size();
