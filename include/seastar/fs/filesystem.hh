@@ -76,4 +76,9 @@ private:
     future<stub_file_handle> create_and_open_inode(std::string path);
 };
 
+future<> bootfs(sharded<filesystem>& fs, std::string device_path);
+
+future<> mkfs(std::string device_path, uint64_t version, disk_offset_t cluster_size, disk_offset_t alignment,
+        inode_t root_directory, uint32_t shards_nb);
+
 } // namespace seastar::fs
