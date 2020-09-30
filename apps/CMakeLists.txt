@@ -54,3 +54,8 @@ add_subdirectory (io_tester)
 add_subdirectory (iotune)
 add_subdirectory (memcached)
 add_subdirectory (seawreck)
+
+if (Seastar_EXPERIMENTAL_FS)
+  add_subdirectory (fs_perf)
+  add_subdirectory (sfs_io_tester)
+endif()
