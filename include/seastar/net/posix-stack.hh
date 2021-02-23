@@ -116,7 +116,9 @@ public:
             : _buffer_allocator(allocator), _fd(std::move(fd)), _config(config) {
     }
     future<temporary_buffer<char>> get() override;
+    future<data_source_impl::buf_with_timestamp> get_timestamped() override;
     future<> close() override;
+    void enable_timestamps() override;
 };
 
 class posix_data_sink_impl : public data_sink_impl {

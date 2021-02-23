@@ -146,9 +146,9 @@ future<> output_stream<CharType>::write(temporary_buffer<CharType> p) noexcept {
   }
 }
 
-template <typename CharType>
+template <typename CharType, bool CollectTimestamps>
 future<temporary_buffer<CharType>>
-input_stream<CharType>::read_exactly_part(size_t n, tmp_buf out, size_t completed) noexcept {
+input_stream<CharType, CollectTimestamps>::read_exactly_part(size_t n, tmp_buf out, size_t completed) noexcept {
     if (available()) {
         auto now = std::min(n - completed, available());
         std::copy(_buf.get(), _buf.get() + now, out.get_write() + completed);
@@ -160,7 +160,7 @@ input_stream<CharType>::read_exactly_part(size_t n, tmp_buf out, size_t complete
     }
 
     // _buf is now empty
-    return _fd.get().then([this, n, out = std::move(out), completed] (auto buf) mutable {
+    return get_from_fd().then([this, n, out = std::move(out), completed] (auto buf) mutable {
         if (buf.size() == 0) {
             _eof = true;
             return make_ready_future<tmp_buf>(std::move(buf));
@@ -170,9 +170,9 @@ input_stream<CharType>::read_exactly_part(size_t n, tmp_buf out, size_t complete
     });
 }
 
-template <typename CharType>
+template <typename CharType, bool CollectTimestamps>
 future<temporary_buffer<CharType>>
-input_stream<CharType>::read_exactly(size_t n) noexcept {
+input_stream<CharType, CollectTimestamps>::read_exactly(size_t n) noexcept {
     if (_buf.size() == n) {
         // easy case: steal buffer, return to caller
         return make_ready_future<tmp_buf>(std::move(_buf));
@@ -183,7 +183,7 @@ input_stream<CharType>::read_exactly(size_t n) noexcept {
         return make_ready_future<tmp_buf>(std::move(front));
     } else if (_buf.size() == 0) {
         // buffer is empty: grab one and retry
-        return _fd.get().then([this, n] (auto buf) mutable {
+        return get_from_fd().then([this, n] (auto buf) mutable {
             if (buf.size() == 0) {
                 _eof = true;
                 return make_ready_future<tmp_buf>(std::move(buf));
@@ -202,14 +202,14 @@ input_stream<CharType>::read_exactly(size_t n) noexcept {
     }
 }
 
-template <typename CharType>
+template <typename CharType, bool CollectTimestamps>
 template <typename Consumer>
 SEASTAR_CONCEPT(requires InputStreamConsumer<Consumer, CharType> || ObsoleteInputStreamConsumer<Consumer, CharType>)
 future<>
-input_stream<CharType>::consume(Consumer&& consumer) noexcept(std::is_nothrow_move_constructible_v<Consumer>) {
+input_stream<CharType, CollectTimestamps>::consume(Consumer&& consumer) noexcept(std::is_nothrow_move_constructible_v<Consumer>) {
     return repeat([consumer = std::move(consumer), this] () mutable {
         if (_buf.empty() && !_eof) {
-            return _fd.get().then([this] (tmp_buf buf) {
+            return get_from_fd().then([this] (tmp_buf buf) {
                 _buf = std::move(buf);
                 _eof = _buf.empty();
                 return make_ready_future<stop_iteration>(stop_iteration::no);
@@ -238,23 +238,23 @@ input_stream<CharType>::consume(Consumer&& consumer) noexcept(std::is_nothrow_mo
     });
 }
 
-template <typename CharType>
+template <typename CharType, bool CollectTimestamps>
 template <typename Consumer>
 SEASTAR_CONCEPT(requires InputStreamConsumer<Consumer, CharType> || ObsoleteInputStreamConsumer<Consumer, CharType>)
 future<>
-input_stream<CharType>::consume(Consumer& consumer) noexcept(std::is_nothrow_move_constructible_v<Consumer>) {
+input_stream<CharType, CollectTimestamps>::consume(Consumer& consumer) noexcept(std::is_nothrow_move_constructible_v<Consumer>) {
     return consume(std::ref(consumer));
 }
 
-template <typename CharType>
+template <typename CharType, bool CollectTimestamps>
 future<temporary_buffer<CharType>>
-input_stream<CharType>::read_up_to(size_t n) noexcept {
+input_stream<CharType, CollectTimestamps>::read_up_to(size_t n) noexcept {
     using tmp_buf = temporary_buffer<CharType>;
     if (_buf.empty()) {
         if (_eof) {
             return make_ready_future<tmp_buf>();
         } else {
-            return _fd.get().then([this, n] (tmp_buf buf) {
+            return get_from_fd().then([this, n] (tmp_buf buf) {
                 _eof = buf.empty();
                 _buf = std::move(buf);
                 return read_up_to(n);
@@ -275,15 +275,15 @@ input_stream<CharType>::read_up_to(size_t n) noexcept {
     }
 }
 
-template <typename CharType>
+template <typename CharType, bool CollectTimestamps>
 future<temporary_buffer<CharType>>
-input_stream<CharType>::read() noexcept {
+input_stream<CharType, CollectTimestamps>::read() noexcept {
     using tmp_buf = temporary_buffer<CharType>;
     if (_eof) {
         return make_ready_future<tmp_buf>();
     }
     if (_buf.empty()) {
-        return _fd.get().then([this] (tmp_buf buf) {
+        return get_from_fd().then([this] (tmp_buf buf) {
             _eof = buf.empty();
             return make_ready_future<tmp_buf>(std::move(buf));
         });
@@ -292,9 +292,9 @@ input_stream<CharType>::read() noexcept {
     }
 }
 
-template <typename CharType>
+template <typename CharType, bool CollectTimestamps>
 future<>
-input_stream<CharType>::skip(uint64_t n) noexcept {
+input_stream<CharType, CollectTimestamps>::skip(uint64_t n) noexcept {
     auto skip_buf = std::min(n, _buf.size());
     _buf.trim_front(skip_buf);
     n -= skip_buf;
@@ -306,9 +306,9 @@ input_stream<CharType>::skip(uint64_t n) noexcept {
     });
 }
 
-template <typename CharType>
+template <typename CharType, bool CollectTimestamps>
 data_source
-input_stream<CharType>::detach() && {
+input_stream<CharType, CollectTimestamps>::detach() && {
     if (_buf) {
         throw std::logic_error("detach() called on a used input_stream");
     }
@@ -544,8 +544,8 @@ public:
 
 extern template struct internal::stream_copy_consumer<char>;
 
-template <typename CharType>
-future<> copy(input_stream<CharType>& in, output_stream<CharType>& out) {
+template <typename CharType, bool CollectTimestamps>
+future<> copy(input_stream<CharType, CollectTimestamps>& in, output_stream<CharType>& out) {
     return in.consume(internal::stream_copy_consumer<CharType>(out));
 }
 

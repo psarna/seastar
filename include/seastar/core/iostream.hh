@@ -39,6 +39,7 @@
 #include <seastar/core/temporary_buffer.hh>
 #include <seastar/core/scattered_message.hh>
 #include <seastar/util/std-compat.hh>
+#include <seastar/core/lowres_clock.hh>
 
 namespace seastar {
 
@@ -46,10 +47,19 @@ namespace net { class packet; }
 
 class data_source_impl {
 public:
+    using clk = lowres_system_clock;
+    using buf_with_timestamp = std::pair<temporary_buffer<char>, std::optional<clk::time_point>>;
+
     virtual ~data_source_impl() {}
     virtual future<temporary_buffer<char>> get() = 0;
+    virtual future<buf_with_timestamp> get_timestamped() {
+        return get().then([] (temporary_buffer<char> buf) {
+            return make_ready_future<buf_with_timestamp>(std::make_pair(std::move(buf), std::nullopt));
+        });
+    }
     virtual future<temporary_buffer<char>> skip(uint64_t n);
     virtual future<> close() { return make_ready_future<>(); }
+    virtual void enable_timestamps() {}
 };
 
 class data_source {
@@ -71,6 +81,13 @@ public:
             return current_exception_as_future<tmp_buf>();
         }
     }
+    future<data_source_impl::buf_with_timestamp> get_timestamped() noexcept {
+        try {
+            return _dsi->get_timestamped();
+        } catch (...) {
+            return current_exception_as_future<data_source_impl::buf_with_timestamp>();
+        }
+    }
     future<tmp_buf> skip(uint64_t n) noexcept {
         try {
             return _dsi->skip(n);
@@ -83,6 +100,13 @@ public:
             return _dsi->close();
         } catch (...) {
             return current_exception_as_future<>();
+        }
+    }
+    void enable_timestamps() noexcept {
+        try {
+            return _dsi->enable_timestamps();
+        } catch (...) {
+            // Ignore
         }
     }
 };
@@ -239,12 +263,13 @@ concept ObsoleteInputStreamConsumer = requires (Consumer c) {
 ///
 /// \note All methods must be called sequentially.  That is, no method may be
 /// invoked before the previous method's returned future is resolved.
-template <typename CharType>
+template <typename CharType, bool CollectTimestamps = false>
 class input_stream final {
     static_assert(sizeof(CharType) == 1, "must buffer stream of bytes");
     data_source _fd;
     temporary_buffer<CharType> _buf;
     bool _eof = false;
+    std::optional<data_source_impl::clk::time_point> _ts;
 private:
     using tmp_buf = temporary_buffer<CharType>;
     size_t available() const noexcept { return _buf.size(); }
@@ -257,7 +282,11 @@ public:
     using unconsumed_remainder = std::optional<tmp_buf>;
     using char_type = CharType;
     input_stream() noexcept = default;
-    explicit input_stream(data_source fd) noexcept : _fd(std::move(fd)), _buf() {}
+    explicit input_stream(data_source fd) noexcept : _fd(std::move(fd)), _buf() {
+        if constexpr (CollectTimestamps) {
+            _fd.enable_timestamps();
+        }
+    }
     input_stream(input_stream&&) = default;
     input_stream& operator=(input_stream&&) = default;
     /// Reads n bytes from the stream, or fewer if reached the end of stream.
@@ -311,8 +340,25 @@ public:
     ///
     /// \returns the data_source
     data_source detach() &&;
+
+    std::optional<data_source_impl::clk::time_point> get_timestamp() const {
+        if constexpr (!CollectTimestamps) {
+            throw std::runtime_error("Timestamps can only be used if they are explicitly enabled as a template parameter");
+        }
+        return _ts;
+    }
 private:
     future<temporary_buffer<CharType>> read_exactly_part(size_t n, tmp_buf buf, size_t completed) noexcept;
+    future<tmp_buf> get_from_fd() {
+        if constexpr (CollectTimestamps) {
+            return _fd.get().then([this] (std::pair<tmp_buf, std::optional<data_source_impl::clk::time_point>>&& buf_with_ts) {
+                _ts = buf_with_ts.second;
+                return std::move(buf_with_ts.first);
+            });
+        } else {
+            return _fd.get();
+        }
+    }
 };
 
 /// Facilitates data buffering before it's handed over to data_sink.
@@ -395,8 +441,8 @@ private:
 /*!
  * \brief copy all the content from the input stream to the output stream
  */
-template <typename CharType>
-future<> copy(input_stream<CharType>&, output_stream<CharType>&);
+template <typename CharType, bool CollectTimestamps>
+future<> copy(input_stream<CharType, CollectTimestamps>&, output_stream<CharType>&);
 
 }
 

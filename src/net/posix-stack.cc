@@ -584,6 +584,54 @@ posix_data_source_impl::get() {
     });
 }
 
+static data_source_impl::clk::time_point timespec_to_time_point(const timespec& ts) {
+    using namespace std::chrono_literals;
+    auto d = std::chrono::duration_cast<data_source_impl::clk::duration>(
+            ts.tv_sec * 1s + ts.tv_nsec * 1ns);
+    return data_source_impl::clk::time_point(d);
+}
+
+future<data_source_impl::buf_with_timestamp>
+posix_data_source_impl::get_timestamped() {
+    auto b = allocate_buffer();
+    ::iovec iov = {b.get_write(), b.size()};
+    std::unique_ptr<::msghdr> mh = std::make_unique<::msghdr>();
+    mh->msg_iov = &iov;
+    mh->msg_iovlen = 1;
+    return _fd.recvmsg(mh.get()).then([this, mh = std::move(mh), b = std::move(b)] (size_t ret) mutable {
+        throw_system_error_on(ret == -1, "recvmsg");
+        b.trim(ret);
+        if (b.size() >= _config.buffer_size) {
+            _config.buffer_size *= 2;
+            _config.buffer_size = std::min(_config.buffer_size, _config.max_buffer_size);
+        } else if (b.size() <= _config.buffer_size / 4) {
+            _config.buffer_size /= 2;
+            _config.buffer_size = std::max(_config.buffer_size, _config.min_buffer_size);
+        }
+
+        // Timestamp extraction
+        std::optional<data_source_impl::clk::time_point> ts;
+        ::cmsghdr* cmsg;
+        ::timespec tm_msg;
+        ::msghdr* msg = mh.get();
+        for (cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
+            if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_TIMESTAMP) {
+                ::memcpy(&tm_msg, CMSG_DATA(cmsg), sizeof(tm_msg));
+                ts = timespec_to_time_point(tm_msg);
+                break;
+            }
+        }
+
+        return make_ready_future<buf_with_timestamp>(std::make_pair(std::move(b), ts));
+    });
+}
+
+void posix_data_source_impl::enable_timestamps() {
+    // SO_TIMESTAMP has ms resolution, which is more than enough for lowres_system_clock time points,
+    // no need for SO_TIMETAMPNS or more complex SO_TIMESTAMPING options.
+    _fd.get_file_desc().setsockopt(SOL_SOCKET, SO_TIMESTAMP, 1);
+}
+
 temporary_buffer<char>
 posix_data_source_impl::allocate_buffer() {
     return make_temporary_buffer<char>(_buffer_allocator, _config.buffer_size);

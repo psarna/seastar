@@ -55,7 +55,7 @@
 namespace seastar {
 
 // iostream.hh
-template <class CharType> class input_stream;
+template <class CharType, bool CollectTimestamps> class input_stream;
 template <class CharType> class output_stream;
 
 class server_socket;
