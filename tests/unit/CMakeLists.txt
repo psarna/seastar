@@ -396,6 +396,9 @@ seastar_add_app_test (smp
 seastar_add_app_test (socket
   SOURCES socket_test.cc)
 
+seastar_add_app_test (socket_skip
+  SOURCES socket_skip_test.cc)
+
 seastar_add_test (sstring
   KIND BOOST
   SOURCES sstring_test.cc)
